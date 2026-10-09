@@ -253,6 +253,64 @@ class SortTests(TestCase):
             self.titles("/?show=active&q=milk&sort=due"), ["Milk soon", "Milk later"]
         )
 
+    def test_completed_go_last_in_every_sort(self):
+        # Owner decision: in every sort, open to-dos first, then completed ones,
+        # each part in that sort's order. In each case a completed to-do would
+        # come FIRST without the rule: added first, due soonest, High, or "A".
+        cases = {
+            "created": (
+                [
+                    ("Done first", {"done": True}),
+                    ("Open A", {}),
+                    ("Open B", {}),
+                    ("Done last", {"done": True}),
+                ],
+                ["Open A", "Open B", "Done first", "Done last"],
+            ),
+            "due": (
+                [
+                    ("Done soon", {"done": True, "due_date": date(2026, 10, 1)}),
+                    ("Open later", {"due_date": date(2026, 10, 20)}),
+                    ("Open soon", {"due_date": date(2026, 10, 12)}),
+                    ("Done no date", {"done": True}),
+                    ("Open no date", {}),
+                ],
+                [
+                    "Open soon",
+                    "Open later",
+                    "Open no date",
+                    "Done soon",
+                    "Done no date",
+                ],
+            ),
+            "priority": (
+                [
+                    ("Done high", {"done": True, "priority": HIGH}),
+                    ("Open low", {"priority": LOW}),
+                    ("Open high", {"priority": HIGH}),
+                    ("Done low", {"done": True, "priority": LOW}),
+                ],
+                ["Open high", "Open low", "Done high", "Done low"],
+            ),
+            "title": (
+                [
+                    ("A done", {"done": True}),
+                    ("c open", {}),
+                    ("B open", {}),
+                    ("d done", {"done": True}),
+                ],
+                ["B open", "c open", "A done", "d done"],
+            ),
+        }
+        # Every sort in the table has a case here.
+        self.assertEqual(set(cases), {value for value, _label, _order in SORTS})
+        for value, (todos, expected) in cases.items():
+            with self.subTest(sort=value):
+                Todo.objects.all().delete()
+                for title, fields in todos:
+                    make(title, **fields)
+                self.assertEqual(self.titles(f"/?sort={value}"), expected)
+
     # Sort: protect what already works.
 
     def test_default_is_oldest_first(self):
