@@ -434,16 +434,18 @@ def todo_edit(request, pk):
         if form.is_valid():
             edited = form.save(commit=False)
             edited.edited = True  # Undo never deletes a to-do a person edited
-            try:
-                # Only change a row that is there. A plain save() would make
-                # the to-do again if someone deleted it a moment ago. The
-                # atomic block keeps a failed save from breaking the rest of
-                # the request's database work.
-                with transaction.atomic():
-                    edited.save(force_update=True)
-            except DatabaseError:
-                raise Http404("This to-do was deleted.") from None
-            form.save_m2m()
+            # The to-do and its tags are saved together, or not at all.
+            with transaction.atomic():
+                try:
+                    # Only change a row that is there. A plain save() would
+                    # make the to-do again if someone deleted it a moment ago.
+                    # The inner atomic block keeps a failed save from breaking
+                    # the rest of the request's database work.
+                    with transaction.atomic():
+                        edited.save(force_update=True)
+                except DatabaseError:
+                    raise Http404("This to-do was deleted.") from None
+                form.save_m2m()
             return back_to_list(request, came_from)
     else:
         form = TodoEditForm(instance=todo, user=request.user)

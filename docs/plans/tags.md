@@ -652,8 +652,63 @@ works.
 server was stopped and the database deleted):
 
 - `tags-list-1280.png`: the Tags box with "home, urgent" and "separated by commas" after Repeats;
-  each row's tags as small rounded links between the title and Edit; no empty space on "Pay rent".
+  each row's tags as small rounded links (after the review: on their own line under the title, see
+  below); no empty space on "Pay rent".
 - `tags-filter-home-1280.png` / `tags-pane-1280.png`: "Tagged **home** · Show all tags" above the
   list, only the three `home` to-dos, the chosen tag bold with a blue border, and the pane's Tags
   row.
 - `tags-filter-none-1280.png`: `No to-dos tagged "banana".`; the count still says "4 items left".
+
+### After lists merged, and after the code review
+
+**Rebase.** Rebased onto `main` (lists merged as `0a93b64`); only the guard's pattern list, the
+forms import and `AGENTS.md` needed combining. The migration was deleted and made again by Django
+(`0013_tag`, after main's `0012_todo_list_required`), in its own commit.
+
+**A red run for every tag test, each for its own reason** (the first red run stopped at the import
+errors). Two steps, on the code from before tags, then thrown away:
+
+1. Stubs only (`clean_tag_name` returns the text; `Tag` is an empty class): the model tests fail
+   for their own reason (`'Todo' object has no attribute 'set_tags'`, `Tag() takes no arguments`,
+   `' Home ' != 'home'`); the edit-form expectations fail (`tag_names` missing from the field
+   sets).
+2. The real models and migration, with the old forms, views, admin and templates: every form, view
+   and template test fails for its own reason. For example `KeyError: 'tag_names'`, `302 != 200`
+   (the bad tags were saved), `['Buy milk', 'Call mum'] != ['Buy milk']` (no filter),
+   `'/lists/1/' != '/lists/1/?tag=home'` (redirect), `0 links named 'go shopping'`, `0 != 1` for the
+   tag list, the pane and the "Tagged" line, and `True is not false` for too long or too many tags.
+   The tests that pass at this step are model tests (red in step 1) or protecting tests (red against
+   a deliberate bug, below).
+
+`RepeatingTagTests` failed with the copy line taken out (`[] != [<Tag: home>, <Tag: weekly>]`).
+`TagOwnerFormTests` fails against "set_tags uses the person saving".
+
+**Review fixes** (each new test failed first, for its own reason):
+
+1. **Security: a move in the admin** into another person's list kept the old owner's `Tag` rows
+   (ana's tag showed on ben's pages). `Todo.save()` now remembers the owner it was loaded with
+   (`from_db`) and clears the tags when the list's owner changes. Test through the admin change
+   form: `['anasecret'] != []` before; and a save in the same list keeps the tags.
+2. **Phone layout**: the tags were a flex item next to the title. They are now the last line of
+   the title block (`<span class="tags" role="list">`, like the steps line). Tests compare the
+   whole title element with its tags; the journey too.
+3. **Escaping of the chosen tag**: `?tag=<b>x</b>` checks the exact "Tagged" line and the
+   "No to-dos tagged" message. Passed already (protecting); fails with `|safe` on either.
+5. **Cleaning twice = cleaning once**: `.lower()` could undo NFKC (`Ά` + U+0345 gave two code points,
+   then one). NFKC now runs once more at the end. A table row for it, and a unit test that tries
+   every code point alone and with U+0345 (about 4 s): 9 code points failed before.
+6. **"Show all tags" keeps the pane open** (`selected`): protecting; fails if it drops `selected`.
+7. **No casefold**: the row `Straße` → `straße`; fails with `casefold()`.
+9. **`todo_edit`** saves the to-do and calls `form.save_m2m()` in the same atomic block. Test: when
+   `set_tags` raises, the new title is not saved (`'Buy oat milk' != 'Buy milk'` before).
+10. **Guard**: a call with `tags__name` but no `tags__owner=` in the SAME call is flagged (stricter
+    than "the same line": `.filter(tags__name=x).filter(tags__owner=...)` is two joins, so it is
+    flagged too). It also catches the deliberate "filter without the owner" bug now.
+
+All deliberate bugs, run again on the final code, are each caught (the list is above, plus: no
+`tags.clear()`, `|safe` twice, "Show all tags" without `selected`, `casefold()`, no second NFKC).
+
+By eye after the review: at 1280 the tags are a line under each title (`tags-pane-1280.png`); the
+tag of a completed to-do is struck through with its title. A headless 375 screenshot is not
+trustworthy here (headless Chrome lays the page out wider than 375 and crops it); the coordinator
+checks 375 in a real phone-size window.

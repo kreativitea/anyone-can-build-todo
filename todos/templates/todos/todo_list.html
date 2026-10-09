@@ -36,15 +36,15 @@
     li .priority.low { color: #555; border: 1px solid #bbb; }
     li.done .priority { opacity: 0.6; }
     .list-footer { color: #666; font-size: 0.9rem; }
-    /* Tags (14): small links. ul.tags li takes away the to-do row style. */
+    /* Tags (14): small links, on their own line in the title block (like the steps line). */
     form.add .tags-box { flex: 1 1 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
     form.add input[name=tag_names] { flex: 1 1 10rem; padding: 0.4rem; font-size: 1rem; }
     form.add .helptext { color: #666; font-size: 0.85rem; }
-    ul.tags { display: inline-flex; flex-wrap: wrap; gap: 0.25rem; margin: 0; padding: 0; }
-    ul.tags li { padding: 0; border: 0; }
-    a.tag { font-size: 0.8rem; padding: 0 0.4rem; border: 1px solid #999; border-radius: 0.6rem; text-decoration: none; color: inherit; white-space: nowrap; }
-    a.tag:hover, a.tag:focus-visible { text-decoration: underline; }
-    a.tag[aria-current] { font-weight: bold; border-color: #1a56db; }
+    .tags { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-top: 0.2rem; }
+    /* Inside .title, so undo the title link style: never bold, underlined on hover. */
+    a.tag, .title a.tag, li.selected .title a.tag { font-size: 0.8rem; font-weight: normal; padding: 0 0.4rem; border: 1px solid #999; border-radius: 0.6rem; text-decoration: none; color: inherit; max-width: 100%; overflow-wrap: anywhere; }
+    a.tag:hover, a.tag:focus-visible, .title a.tag:hover, .title a.tag:focus-visible { text-decoration: underline; }
+    a.tag[aria-current], .title a.tag[aria-current], li.selected .title a.tag[aria-current] { font-weight: bold; border-color: #1a56db; }
     p.current-tag { margin: 0 0 1rem; }
     /* The details pane. */
     .title a { color: inherit; text-decoration: none; }
@@ -138,8 +138,8 @@
       <ul>
         {% for todo in todos %}
           <li id="todo-{{ todo.pk }}" class="{% if todo.done %}done{% endif %}{% if todo == selected %} selected{% endif %}">
-            <span class="title"><a href="{{ select_base }}{{ todo.pk }}#details"{% if todo == selected %} aria-current="true"{% endif %}>{{ todo.title }}</a>{% if q and not todo.title_match %}<small class="match-hint">matches in notes</small>{% endif %}{% if todo.priority != todo.Priority.MEDIUM %} <span class="priority {{ todo.get_priority_display|lower }}">{{ todo.get_priority_display }} priority</span>{% endif %}{% if todo.due_date %}<small class="due">due {{ todo.due_date|date:"j M Y" }}</small>{% endif %}{% if todo.repeats and not todo.done %}<span class="repeat">{{ todo.get_repeat_display }}</span>{% endif %}{% if todo.subtask_count %}<small class="progress"><a href="{% url 'subtask_list' todo.pk %}{{ list_query }}" aria-label="{{ todo.subtask_done_count }} of {{ todo.subtask_count }} steps for {{ todo.title }}">{{ todo.subtask_done_count }} of {{ todo.subtask_count }} steps</a></small>{% endif %}</span>
-            {% include "todos/tag_list.html" with tags=todo.tags.all %}
+            <span class="title"><a href="{{ select_base }}{{ todo.pk }}#details"{% if todo == selected %} aria-current="true"{% endif %}>{{ todo.title }}</a>{% if q and not todo.title_match %}<small class="match-hint">matches in notes</small>{% endif %}{% if todo.priority != todo.Priority.MEDIUM %} <span class="priority {{ todo.get_priority_display|lower }}">{{ todo.get_priority_display }} priority</span>{% endif %}{% if todo.due_date %}<small class="due">due {{ todo.due_date|date:"j M Y" }}</small>{% endif %}{% if todo.repeats and not todo.done %}<span class="repeat">{{ todo.get_repeat_display }}</span>{% endif %}{% if todo.subtask_count %}<small class="progress"><a href="{% url 'subtask_list' todo.pk %}{{ list_query }}" aria-label="{{ todo.subtask_done_count }} of {{ todo.subtask_count }} steps for {{ todo.title }}">{{ todo.subtask_done_count }} of {{ todo.subtask_count }} steps</a></small>{% endif %}{% include "todos/tag_list.html" with tags=todo.tags.all %}</span>
+            {# The tags are the last line of the title block, like the steps line: on a phone the title keeps the full width. #}
             {# The steps line is inside the title block, so on a phone the title keeps the full width. #}
             {# subtask_count comes from the list query. Never todo.subtasks.count: one query per row. #}
             <a class="edit" href="{% url 'todo_edit' todo.pk %}{{ list_query }}" aria-label="Edit {{ todo.title }}">Edit</a>

@@ -26,7 +26,9 @@ def clean_tag_name(text):
     NFKC turns wide letters into normal ones. A control character (a line
     break, a tab, "\\0") becomes a space; a format character (a zero-width
     space, a soft hyphen) is removed. "" means: not a tag. Cleaning twice
-    gives the same as cleaning once.
+    gives the same as cleaning once: .lower() can undo NFKC's work (Ά and a
+    combining mark), so NFKC runs once more at the end. A unit test checks
+    every character.
     """
     text = unicodedata.normalize("NFKC", text)
     text = "".join(
@@ -34,7 +36,7 @@ def clean_tag_name(text):
         for ch in text
         if unicodedata.category(ch) != "Cf"
     )
-    return " ".join(text.split()).lower()
+    return unicodedata.normalize("NFKC", " ".join(text.split()).lower())
 
 
 def list_name_key(name):
@@ -284,7 +286,20 @@ class Todo(models.Model):
         # The owner always follows the list (CONVENTIONS, OWNERSHIP), so no
         # view has to remember it, and the two can never be different.
         self.owner_id = self.todo_list.owner_id
+        saved_owner_id = getattr(self, "_saved_owner_id", self.owner_id)
         super().save(*args, **kwargs)
+        self._saved_owner_id = self.owner_id
+        if saved_owner_id != self.owner_id:
+            # Moved into another person's list (only the admin can do this
+            # today). Its tags are the OLD owner's rows: they never go with it.
+            self.tags.clear()
+
+    @classmethod
+    def from_db(cls, db, field_names, values):
+        todo = super().from_db(db, field_names, values)
+        # The owner as it is in the database, for save().
+        todo._saved_owner_id = todo.owner_id
+        return todo
 
     def set_tags(self, names):
         """Put exactly these tags on this to-do. Missing tags are made for the LIST's owner.
