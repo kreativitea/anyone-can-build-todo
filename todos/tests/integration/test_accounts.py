@@ -12,7 +12,7 @@ from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.test import SimpleTestCase, TestCase
 
-from todos.models import Subtask, Todo
+from todos.models import Subtask, Todo, TodoList
 from todos.tests.integration.helpers import (
     LOGIN_URL,
     LOGOUT_URL,
@@ -34,8 +34,12 @@ NEXT_LIST = f"{LOGIN_URL}?next=/"
 
 
 def tables():
-    """Every row of both tables, to check that nothing changed."""
-    return list(Todo.objects.values()), list(Subtask.objects.values())
+    """Every row of the three tables, to check that nothing changed."""
+    return (
+        list(TodoList.objects.values()),
+        list(Todo.objects.values()),
+        list(Subtask.objects.values()),
+    )
 
 
 class VisitorTests(TestCase):
@@ -54,7 +58,15 @@ class VisitorTests(TestCase):
 
     def test_visitor_get_of_any_page_comes_back_to_it_after_log_in(self):
         pk = self.milk.pk
-        for url in [f"/{pk}/edit/", f"/{pk}/subtasks/", "/?show=active"]:
+        list_id = self.todo_list.pk
+        for url in [
+            f"/{pk}/edit/",
+            f"/{pk}/subtasks/",
+            "/?show=active",
+            f"/lists/{list_id}/?show=active",
+            "/lists/new/",
+            f"/lists/{list_id}/edit/",
+        ]:
             with self.subTest(url=url):
                 response = self.client.get(url)
                 self.assertRedirects(
@@ -87,6 +99,9 @@ class VisitorTests(TestCase):
             (f"/{pk}/subtasks/add/", {"title": "Hacked"}),
             (f"/{pk}/subtasks/{step}/done/", {"done": "1"}),
             (f"/{pk}/subtasks/{step}/delete/", {}),
+            ("/lists/new/", {"name": "Hacked"}),
+            (f"/lists/{list_id}/edit/", {"name": "Hacked"}),
+            (f"/lists/{list_id}/delete/", {}),
         ]
         before = tables()
         for url, data in posts:

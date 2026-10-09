@@ -282,8 +282,11 @@ class EditTests(LoggedInTestCase):
 
     def test_list_page_keeps_its_title_and_add_form(self):
         response = self.client.get(self.list_url())
-        self.assertContains(response, "<title>To-do list</title>", html=True)
-        self.assertContains(response, "<h1>To-do list</h1>", html=True)
+        # Lists (13): the heading and the title name the open list.
+        self.assertContains(
+            response, "<title>My to-dos – To-do list</title>", html=True
+        )
+        self.assertContains(response, "<h1>My to-dos</h1>", html=True)
         self.assertContains(
             response,
             '<input type="text" name="title" aria-label="New to-do" '

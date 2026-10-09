@@ -372,8 +372,10 @@ class PageParts(HTMLParser):
     `titles` is the title of every to-do shown, in order: the text of each
     <span class="title">, and of an <a> directly inside it (the title link).
     Other tags inside the span (the due date is a <small>) are not the title.
-    `current_links` is the text of every link with aria-current="page". A test
-    that compares it to one name proves that no OTHER link is marked too.
+    `current_links` is the text of every link with aria-current="page", except
+    in the lists <nav> (lists, 13). A test that compares it to one name proves
+    that no OTHER link is marked too. `current_lists` is the same for the
+    lists <nav>: the open list.
     `selected_titles` is the text of every title link with aria-current="true":
     the selected to-do. Sort links use "true" too, but they are not titles.
     `panes` is the aria-label of every <aside>, in order. [] means "no pane".
@@ -395,6 +397,8 @@ class PageParts(HTMLParser):
         self.html_lang = None
         self.titles = []
         self.current_links = []
+        self.current_lists = []
+        self._in_lists_nav = False
         self.selected_titles = []
         self.panes = []
         self.pane_notes = None
@@ -428,9 +432,12 @@ class PageParts(HTMLParser):
             self.titles.append("")
             self._collect = [self.titles]
             self._title_depth = 0
+        if tag == "nav" and attrs.get("class") == "lists":
+            self._in_lists_nav = True
         if tag == "a" and attrs.get("aria-current") == "page":
-            self.current_links.append("")
-            self._collect = [self.current_links]
+            marked = self.current_lists if self._in_lists_nav else self.current_links
+            marked.append("")
+            self._collect = [marked]
         if tag == "aside":
             self.panes.append(attrs.get("aria-label"))
 
@@ -451,6 +458,8 @@ class PageParts(HTMLParser):
     def handle_endtag(self, tag):
         if tag == "aside":
             self._in_pane = False
+        if tag == "nav":
+            self._in_lists_nav = False
         if tag == "dd":
             self._in_notes = False
         self._collect = []

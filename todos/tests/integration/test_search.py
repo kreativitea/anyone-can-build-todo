@@ -162,11 +162,12 @@ class SearchTests(LoggedInTestCase):
 
     def test_page_title_names_the_search(self):
         cases = [
-            ({}, "<title>To-do list</title>"),
-            ({"q": "milk"}, "<title>Search: milk – To-do list</title>"),
+            # Lists (13): the title names the open list too.
+            ({}, "<title>My to-dos – To-do list</title>"),
+            ({"q": "milk"}, "<title>Search: milk – My to-dos – To-do list</title>"),
             (
                 {"q": "<b>hi</b>"},
-                "<title>Search: &lt;b&gt;hi&lt;/b&gt; – To-do list</title>",
+                "<title>Search: &lt;b&gt;hi&lt;/b&gt; – My to-dos – To-do list</title>",
             ),
         ]
         for params, page_title in cases:

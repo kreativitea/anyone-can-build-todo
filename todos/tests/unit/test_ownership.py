@@ -71,7 +71,15 @@ class OwnerModelTests(TestCase):
 # A to-do query that does not start from the owner. `Todo.objects` must go on
 # with `.for_user(`; a step is never asked for directly (always through its
 # to-do: `todo.subtasks`); no generic view or form is built on the models.
+# Lists (13): `TodoList.objects` goes on with `.for_user(` (lists a person may
+# use), `.owned_by(` (owner-only actions) or `.create_default(` (sign-up).
+# Never a raw owner filter: sharing (20) replaces for_user, and must find
+# every caller.
 UNSCOPED = [
+    re.compile(r"\bTodoList\.objects\b(?!\.(for_user|owned_by|create_default)\()"),
+    re.compile(r"\bTodoList\._(default|base)_manager\b"),
+    re.compile(r"get_object_or_404\(\s*TodoList\b(?!\.objects\.(for_user|owned_by)\()"),
+    re.compile(r"get_list_or_404\(\s*TodoList\b(?!\.objects\.(for_user|owned_by)\()"),
     re.compile(r"\bTodo\.objects\b(?!\.for_user\()"),
     re.compile(r"\bTodo\._(default|base)_manager\b"),
     re.compile(r"\bSubtask\.objects\b"),
@@ -185,6 +193,11 @@ class OwnerGuardTests(SimpleTestCase):
             "steps = get_list_or_404(Subtask, todo=todo)",
             "todos = get_list_or_404(Todo, done=True)",
             "steps = todo.subtasks.model.objects.all()",
+            "lists = TodoList.objects.all()",
+            "lists = TodoList.objects.filter(owner=request.user)",
+            "todo_list = get_object_or_404(TodoList, pk=list_pk, owner=request.user)",
+            "TodoList._default_manager.get(pk=list_id)",
+            "lists = get_list_or_404(TodoList, owner=user)",
         ]:
             with self.subTest(line=line):
                 self.assertTrue(any(p.search(line) for p in UNSCOPED))
@@ -195,6 +208,11 @@ class OwnerGuardTests(SimpleTestCase):
             "SEARCH_MAX_LENGTH = Todo._meta.get_field('title').max_length",
             "todos = get_list_or_404(Todo.objects.for_user(request.user))",
             "model = TodoList",
+            "lists = TodoList.objects.for_user(request.user)",
+            "first = TodoList.objects.owned_by(request.user).first()",
+            "TodoList.objects.create_default(user)",
+            "get_object_or_404(TodoList.objects.for_user(request.user), pk=list_id)",
+            "get_object_or_404(TodoList.objects.owned_by(request.user), pk=list_id)",
         ]:
             with self.subTest(line=line):
                 self.assertFalse(any(p.search(line) for p in UNSCOPED))
