@@ -103,7 +103,8 @@ field would do that.
 - The admin's list shows a **Priority** column, with the word, not the number.
 - The admin's list has a **filter by priority** on the side (and by done).
 - The admin's edit page shows the select box by itself. No code is needed for that.
-- There is no automatic test for the admin. We check it by hand (Steps, below).
+- An integration test checks the admin's Priority column and its High filter link (added after
+  the code review; see "What happened").
 
 ## What we will not do (yet)
 
@@ -177,6 +178,11 @@ uv run python manage.py migrate
   queue deletes it and runs `makemigrations` again before it merges (the migration rule).
 - It is a normal `AddField` with a default. Django fills `2` (Medium) into every old row by itself.
   So there is **no data migration**, and nothing extra to do when the merge queue makes it again.
+- **The guard for the default.** The tests make their database from the migrations, but no test
+  reads the default **in the migration file**. If someone changed `default=2` to `default=1`
+  there, every test would still pass. `makemigrations --check --dry-run` (part of `make check` and
+  CI) catches it: the model says 2 and the migration says 1, so it asks for a new migration and
+  fails.
 - Commit the migration file.
 
 ### 3. `todos/forms.py` — the form
@@ -396,7 +402,7 @@ code back. `git diff` must not show a broken line.
    `git diff`.
 6. **Old data.** Copy a `db.sqlite3` that has to-dos in it, from before this change. Run `migrate`
    on the copy. Open the admin: every old to-do is Medium.
-7. **The admin, by hand.** Log in to `/admin/`. The Todo list has a Priority column that shows the
+7. **The admin, by hand** (now also covered by an integration test). Log in to `/admin/`. The Todo list has a Priority column that shows the
    word. The filter on the right has High, Medium and Low, and choosing High shows only High
    to-dos. The edit page has a Priority select box.
 8. Run `make run` and open the page:
@@ -417,8 +423,14 @@ code back. `git diff` must not show a broken line.
   goes after `priority` in the model, one more line at the end of `fields`, its template lines after
   `{{ form.priority }}`, and its own class in `test_forms.py`. The merge queue makes the migration
   again.
-- **Feature 4 (edit).** A missing or empty priority makes a saved to-do Medium. The edit page
-  always posts the select box, so this does not happen in practice. Also, the title box has
+- **The database does not enforce the three values** (accepted). `choices` is checked by the form
+  and the admin, not by the database. A `9` saved from a Python shell would be stored, and the
+  list would show `9 priority` (with the class `priority 9`). Every way a person changes data
+  goes through the form or the admin, so we accept this. A database constraint (a rule the
+  database itself checks) can be added later if a new way to write data appears.
+- **Feature 4 (edit).** A post to the edit page **without** a priority makes a saved to-do Medium
+  (a test pins this rule). The edit page always posts the select box, so this does not happen in
+  practice; only a hand-made post would do it. Also, the title box has
   `aria-label="New to-do"` and `autofocus`: a question for feature 4, not for this plan.
 - **Feature 4 moves the CSS.** Edit (4) makes `todos/templates/base.html` for the shared CSS. It
   merges after this one, so it moves the four priority CSS rules there with the rest.
@@ -450,8 +462,8 @@ These are the places where it did something a little different, and why.
 5. **The label is inside `<span class="title">`.** The due date is already inside that span, so
    "after the title, before the due date" means inside it. A done to-do's title has a line
    through it, and that line would also cross out the label. So the label's CSS also has
-   `display: inline-block` (a line through the parent does not reach an inline-block child), and
-   `margin-left: 0.4rem` for a small space after the title.
+   `display: inline-block` (a line through the parent does not reach an inline-block child). After
+   the code review, a space in the template replaced the first version's `margin-left` (see 9).
 6. **Break it on purpose.** All four bugs were caught:
    - no `initial=`: `test_new_form_starts_on_medium` and `test_list_page_has_a_priority_box`
      failed. The CUJ test failed too, because the browser sent High and the row said
@@ -467,5 +479,39 @@ These are the places where it did something a little different, and why.
    then `migrate` ran `0003_todo_priority`. Both old to-dos have `priority = 2` (Medium), and
    nothing else changed.
 8. **Steps 7 and 8 (the admin and the page, by hand in a browser)** were not done by the builder
-   agent. The tests check the form, the labels and the redirects. The admin's `list_display` and
-   `list_filter` are only configuration, and `make check` runs Django's own checks on them.
+   agent. The admin is now covered by a test (see 9); the page by the tests and the CUJ test.
+9. **After the code review.** An adversarial code reviewer found no blockers, and these gaps.
+   Each new test was seen failing against its own bug, and each bug was put back:
+   - **The label is in its own row.** The label tests also match the whole
+     `<span class="title">…</span>` of the right to-do. Bug: all labels moved after `</ul>`; both
+     label tests failed.
+   - **The admin.** New test `test_admin_list_has_a_priority_column_and_filter` (a superuser,
+     `force_login`, the admin list page): it finds `<td class="field-priority">High</td>` and
+     `<a href="?priority__exact=3">High</a>`. Bugs: `priority` taken out of `list_display`, then out
+     of `list_filter`; the test failed each time.
+   - **The choice is kept after an error.** New test `test_error_page_keeps_the_chosen_priority`:
+     a bad date with Low chosen gives back the whole select with Low `selected`. Bug: a
+     hand-written select that always says Medium; the test failed.
+   - **A space before the label.** The text read `Pay rentHigh priority`. Now the template has a
+     space before the label, and the label's `margin-left` is gone (the space makes the gap). A
+     new CUJ test, `test_a_high_priority_todo_stands_out_until_it_is_done`, checks the title's text
+     is `Pay rent High priority`. It failed before the fix.
+   - **A done label fades.** New CSS `li.done .priority { opacity: 0.6; }`, so a finished High
+     to-do does not stand out more than open ones. The words stay. The same CUJ test checks the
+     opacity is `1`, then `0.6` after Done. Bug: the rule taken out; it failed.
+   - **The label is not crossed out on a done row.** The reviewer asked to check the label's
+     computed `text-decoration-line` is `none`. That check can never fail: `text-decoration` is
+     not inherited, so the label's own value is `none` even when the title's line is drawn
+     through it (a small browser script showed `none` for both `inline` and `inline-block`). So
+     the CUJ test instead walks up from the label: if the label and its parents up to the first
+     non-inline box have no `line-through`, the line does not reach it. Bug: `display: inline`;
+     the test failed with `True is not false`.
+   - **The CUJ's Medium check** is now `expect(item.locator(".priority")).to_have_count(0)`.
+     Bug: no `{% if %}`, so Medium gets a label; the first journey failed.
+   - **The migration default.** Bug: `default=1` in the migration file for a moment.
+     `makemigrations --check --dry-run` wanted a new migration (`0004_alter_todo_priority`) and
+     exited with code 1. See "The guard for the default" in section 2.
+   - **Risks** now say that the database does not enforce the three values (accepted), and that
+     an edit post without a priority makes it Medium.
+   - **A CUJ run that was not explained.** Once, right after the template change, the first
+     journey ended with an error. The message was not saved. The next 16 runs in a row passed.
