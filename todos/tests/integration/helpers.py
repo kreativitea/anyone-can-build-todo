@@ -7,6 +7,7 @@ so the tests can compare whole things instead of searching for a few words.
 import re
 from html.parser import HTMLParser
 from typing import NamedTuple
+from urllib.parse import quote
 
 from django.contrib.auth import get_user_model
 from django.test import Client, TestCase
@@ -531,6 +532,25 @@ def title_element(
     )
 
 
+def tag_list(list_id, names, query="", current=""):
+    """The <ul class="tags"> of one to-do, exactly as the page must show it.
+
+    Each tag is a link to the list `list_id` with `tag=<name>` after the other
+    list settings in `query` (like "?show=active"). The name in the address is
+    encoded like the template's `urlencode:''` (a space is %20); the text is
+    escaped. The link of the `current` tag has aria-current="true".
+    """
+    joiner = "&" if query else "?"
+    items = []
+    for name in names:
+        href = f"{list_path(list_id, query)}{joiner}tag={quote(name, safe='')}"
+        mark = ' aria-current="true"' if name == current else ""
+        items.append(
+            f'<li><a class="tag" href="{escape(href)}"{mark}>{escape(name)}</a></li>'
+        )
+    return f'<ul class="tags" aria-label="Tags">{"".join(items)}</ul>'
+
+
 def toggle_form(todo, done=False, query=""):
     """A row's Done (or, for a completed to-do, Undo) form, exactly, without
     the CSRF token. It sends the state the person wants: done=1 or done=0.
@@ -554,6 +574,7 @@ def pane_element(
     edit_url=None,
     repeats=None,
     steps=None,
+    tags=None,
 ):
     """The whole details <aside>, exactly as the page must show it.
 
@@ -567,6 +588,8 @@ def pane_element(
     "Every week". Its row comes right after Due.
     `steps` (None: no Steps row) is (done, total, href): the row "Steps: 1 of 3
     done", a link to the steps page. It comes before the notes.
+    `tags` (None: no Tags row) is the whole tag list, from `tag_list()`. Its
+    row comes right after Priority.
     """
     if edit_url is None:
         query = close_url[close_url.index("?") :] if "?" in close_url else ""
@@ -577,6 +600,7 @@ def pane_element(
         ("Due", due),
         *([("Repeats", repeats)] if repeats is not None else []),
         ("Priority", priority),
+        *([("Tags", tags)] if tags is not None else []),
         ("Created", created),
     ]
     dl = "".join(f"<dt>{name}</dt><dd>{value}</dd>" for name, value in rows)
