@@ -1,32 +1,56 @@
 from datetime import date, timedelta
 
+from django.db import connection
+from django.db.models import QuerySet
 from django.test import TestCase
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
+from django.utils import timezone
 
 from todos.models import Todo
-from todos.tests.integration.helpers import page_parts, title_element
+from todos.tests.integration.helpers import (
+    page_parts,
+    pane_element,
+    show_date,
+    title_element,
+)
+from todos.views import SORTS
 
 HIGH = Todo.Priority.HIGH
 MEDIUM = Todo.Priority.MEDIUM
 LOW = Todo.Priority.LOW
 
-# The sort links, as the whole <nav> element. Each link is filled in by `nav`.
+# The sort links, as the whole <nav> element. The visible "Sort by:" is also
+# the nav's name (aria-labelledby), so a screen reader says it once.
 NAV = (
-    '<nav class="sort" aria-label="Sort by">Sort by: '
-    '<a href="/"{created}>Date added</a>'
-    '<a href="/?sort=due"{due}>Due date</a>'
-    '<a href="/?sort=priority"{priority}>Priority</a>'
-    '<a href="/?sort=title"{title}>Title</a>'
+    '<nav class="sort" aria-labelledby="sort-label">'
+    '<span id="sort-label">Sort by:</span>'
+    "{links}"
     "</nav>"
 )
+LINKS = [
+    ("created", "Date added"),
+    ("due", "Due date"),
+    ("priority", "Priority"),
+    ("title", "Title"),
+]
 CURRENT = ' aria-current="true"'
 
 
-def nav(chosen):
-    """The whole sort <nav> on a page with no other parameters, `chosen` marked."""
-    marks = {"created": "", "due": "", "priority": "", "title": ""}
-    marks[chosen] = CURRENT
-    return NAV.format(**marks)
+def nav(chosen, selected=None):
+    """The whole sort <nav>, with `chosen` marked.
+
+    `selected` is the id of the selected to-do: every link keeps it, last.
+    """
+    links = ""
+    for value, label in LINKS:
+        params = [] if value == "created" else [f"sort={value}"]
+        if selected is not None:
+            params.append(f"selected={selected}")
+        href = "/" + ("?" + "&amp;".join(params) if params else "")
+        mark = CURRENT if value == chosen else ""
+        links += f'<a href="{href}"{mark}>{label}</a>'
+    return NAV.format(links=links)
 
 
 def make(title, **fields):
@@ -39,6 +63,7 @@ def make_earlier(todo, than):
     Then the id order and the date-added order disagree: a test that needs the
     date-added order cannot pass by the id order by chance.
     """
+    than.refresh_from_db()
     earlier = than.created_at - timedelta(seconds=1)
     Todo.objects.filter(pk=todo.pk).update(created_at=earlier)
 
@@ -62,6 +87,12 @@ class SortTests(TestCase):
         make("High", due_date=date(2026, 10, 12), priority=HIGH)
         self.assertEqual(self.titles("/?sort=due"), ["High", "Low"])
 
+    def test_due_and_priority_ties_keep_date_added_order(self):
+        b = make("B", due_date=date(2026, 10, 12))
+        a = make("A", due_date=date(2026, 10, 12))
+        make_earlier(a, than=b)  # id order: B, A. Date added: A, B.
+        self.assertEqual(self.titles("/?sort=due"), ["A", "B"])
+
     def test_sort_by_priority(self):
         make("Low", priority=LOW)
         make("Medium", priority=MEDIUM)
@@ -77,6 +108,12 @@ class SortTests(TestCase):
             self.titles("/?sort=priority"),
             ["High soon", "High later", "High no date", "Low"],
         )
+
+    def test_priority_and_due_ties_keep_date_added_order(self):
+        b = make("B", priority=HIGH)
+        a = make("A", priority=HIGH)
+        make_earlier(a, than=b)  # id order: B, A. Date added: A, B.
+        self.assertEqual(self.titles("/?sort=priority"), ["A", "B"])
 
     def test_sort_by_title_ignores_case(self):
         make("cherry")
@@ -111,6 +148,48 @@ class SortTests(TestCase):
                 self.assertContains(response, nav(chosen), count=1, html=True)
                 # The filter's mark is not changed: only All has "page".
                 self.assertEqual(page_parts(response).current_links, ["All"])
+
+    def test_sort_row_stays_when_the_pane_is_open(self):
+        todo = make("Buy milk")
+        response = self.client.get(f"/?sort=priority&selected={todo.pk}")
+        self.assertEqual(page_parts(response).panes, ["Details"])
+        self.assertContains(
+            response, nav("priority", selected=todo.pk), count=1, html=True
+        )
+
+    def test_pane_keeps_the_sort(self):
+        todo = make("Buy milk")
+        response = self.client.get(f"/?sort=due&selected={todo.pk}")
+        todo.refresh_from_db()
+        pane = pane_element(
+            todo,
+            created=show_date(timezone.localtime(todo.created_at)),
+            close_url="/?sort=due",
+            edit_url=f"/{todo.pk}/edit/?sort=due&selected={todo.pk}",
+        )
+        self.assertContains(response, pane, count=1, html=True)
+
+    def test_edit_page_cancel_keeps_the_sort(self):
+        todo = make("Buy milk")
+        response = self.client.get(f"/{todo.pk}/edit/?show=active&sort=due")
+        self.assertContains(
+            response, '<a href="/?show=active&amp;sort=due">Cancel</a>', html=True
+        )
+
+    def test_every_sort_is_one_list_query(self):
+        make("Low", priority=LOW, due_date=date(2026, 10, 12))
+        make("High", priority=HIGH)
+        make("Medium", done=True)
+        with CaptureQueriesContext(connection) as plain:
+            self.client.get("/")
+        for value, _label, _order in SORTS:
+            with self.subTest(sort=value):
+                with CaptureQueriesContext(connection) as sorted_page:
+                    response = self.client.get(f"/?sort={value}")
+                self.assertEqual(len(sorted_page), len(plain))
+                # The database sorts. Sorting in Python (sorted()) costs no
+                # extra query, but it turns the list into a Python list.
+                self.assertIsInstance(response.context["todos"], QuerySet)
 
     def test_sort_is_kept_everywhere(self):
         todo = make("Buy milk")
@@ -177,9 +256,12 @@ class SortTests(TestCase):
     # Sort: protect what already works.
 
     def test_default_is_oldest_first(self):
-        make("C")
-        make("A")
-        make("B")
+        # id order: B, A, C. Date added: C, A, B.
+        b = make("B")
+        a = make("A")
+        c = make("C")
+        make_earlier(a, than=b)
+        make_earlier(c, than=a)
         for url in ["/", "/?sort=created", "/?sort=banana"]:
             with self.subTest(url=url):
                 self.assertEqual(self.titles(url), ["C", "A", "B"])
