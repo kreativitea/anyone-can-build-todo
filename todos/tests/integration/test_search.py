@@ -143,14 +143,15 @@ class SearchTests(TestCase):
         self.buy.notes = "the milk in the blue box"
         self.buy.save()
         shopping = Todo.objects.create(title="Shopping", notes="milk and eggs")
+        # "Milk the cow" is completed, so it comes last (completed go last).
         with self.subTest("a search"):
             response = self.search("milk")
             self.assert_shown(
-                response, [self.buy, self.cow, shopping], query(q="milk"), [shopping]
+                response, [self.buy, shopping, self.cow], query(q="milk"), [shopping]
             )
         with self.subTest("no search: never a hint"):
             response = self.client.get("/")
-            self.assert_shown(response, [self.buy, self.cow, self.call, shopping])
+            self.assert_shown(response, [self.buy, self.call, shopping, self.cow])
 
     def test_no_match_message_shows_the_cleaned_word(self):
         # Spaces and a zero-width space around the word are cleaned away.
@@ -208,7 +209,8 @@ class SearchTests(TestCase):
         for url in ["/?q=", "/?q=%20%20", "/?q=%E3%80%80"]:
             with self.subTest(url=url):
                 response = self.client.get(url)
-                self.assert_shown(response, [self.buy, self.cow, self.call])
+                # "Milk the cow" is completed, so it comes last.
+                self.assert_shown(response, [self.buy, self.call, self.cow])
                 self.assertContains(response, PLAIN_SEARCH_FORM, count=1, html=True)
                 self.assertContains(
                     response, '<a href="/" aria-current="page">All</a>', html=True

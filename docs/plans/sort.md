@@ -492,3 +492,20 @@ test. These commits fix that, and two small things on the page:
   Due date · Priority · Title" are two rows, each with its plain label, and the chosen link bold.
   With a to-do selected (`/?show=active&sort=due&selected=<id>`) the pane is on the right and both
   rows stay. The phone width is checked by the orchestrator with a real mobile viewport.
+
+## Later change: completed to-dos go last
+
+- **Owner decision (after sort was merged):** in **every** sort, including the default "Date
+  added", the open to-dos come first and the completed to-dos come last.
+- **The rule:** every row in `SORTS` now starts with `"done"`. `done` is `False` for an open
+  to-do and `True` for a completed one, and the database puts `False` first. After `"done"`, each
+  sort keeps its old keys and tie rules, so the open part and the completed part are each in that
+  sort's order. The table above is unchanged except for this first key.
+- **Why:** with "Due date", an old completed to-do (due long ago) came first, above the open work.
+- **No change** to `Meta.ordering` (other code relies on it), no migration, and the page still
+  makes one list query.
+- **Tests:** `test_completed_go_last_in_every_sort` has one subTest per sort. In each one, a
+  completed to-do would come first without the rule. Removing `"done"` from one row makes only
+  that row's subTest fail. Two search tests (`test_notes_only_match_shows_a_hint`,
+  `test_empty_search_is_the_same_as_no_search`) had the completed "Milk the cow" in the middle of
+  the list; they now expect it last.
