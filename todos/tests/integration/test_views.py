@@ -295,6 +295,15 @@ class DeleteCompletedTests(TestCase):
             html=True,
         )
 
+    def test_delete_completed_form_is_in_the_list_footer(self):
+        # The footer under the list is a <div>, not a <footer>: a <footer> in
+        # <body> is announced to screen readers as the footer of the page.
+        response = self.client.get(reverse("todo_list"))
+        html = response.content.decode()
+        start = html.index('<div class="list-footer">')
+        self.assertIn('class="delete-completed"', html[start:])
+        self.assertNotIn("<footer", html)
+
     def test_delete_completed_button_says_one_to_do(self):
         self.home.delete()
         response = self.client.get(reverse("todo_list"))

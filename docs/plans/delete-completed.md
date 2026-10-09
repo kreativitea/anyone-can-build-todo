@@ -39,8 +39,9 @@ finished many things can clean up the list with one click, instead of one Delete
   ever; "Clear" can sound like they are only hidden. The number tells the person exactly how many
   will go.
 - **The button shows only when at least one to-do is completed.**
-- **The button sits in the footer under the list** (`<footer class="list-footer">`, made by feature
-  12), far from the Done / Undo / Delete buttons of each to-do.
+- **The button sits in the footer under the list** (`<div class="list-footer">`, made by feature
+  12), far from the Done / Undo / Delete buttons of each to-do. It is a `<div>`, not a `<footer>`
+  element: a `<footer>` in `<body>` is announced to screen readers as the footer of the whole page.
 - **Only the completed to-dos the person saw are deleted.** The form sends the **id** of each completed to-do
   on the page (an id, or `pk`, is the number that names one row in the table). The view deletes only
   to-dos that are in that list **and** are still completed. This stops a **race** (two things happening
@@ -187,7 +188,7 @@ def todo_delete_completed(request):
 
 ### 4. `todos/templates/todos/todo_list.html` — the button
 
-The button goes **inside** `<footer class="list-footer">`, after `</ul>`, below the count of feature
+The button goes **inside** `<div class="list-footer">`, after `</ul>`, below the count of feature
 12:
 
 ```html
@@ -206,12 +207,12 @@ The button goes **inside** `<footer class="list-footer">`, after `</ul>`, below 
 If feature 12 has not merged when you start, make the footer yourself, with the same class:
 
 ```html
-<footer class="list-footer">
+<div class="list-footer">
   ...the form above...
-</footer>
+</div>
 ```
 
-and one CSS line: `footer.list-footer { margin-top: 1rem; }` (feature 12 may already have it).
+and one CSS line: `.list-footer { margin-top: 1rem; }` (feature 12 may already have it).
 
 ### 5. `AGENTS.md` — the file table
 
@@ -232,7 +233,7 @@ so this branch is the one that is rebased and fixed. Expect these clashes:
 |---|---|---|---|
 | `models.py` | `TodoQuerySet` with `remaining()`, and `objects = ...` | the same class with `completed()` | one class with both methods, one `objects` line |
 | `page_context` in `views.py` | its count key, after `"form"` | `"completed_ids"`, after `"form"` | both keys, one per line, 12's first |
-| template, after `</ul>` | `<footer class="list-footer">` with the count | the same footer with the button | one footer: the count, then the button |
+| template, after `</ul>` | `<div class="list-footer">` with the count | the same footer with the button | one footer: the count, then the button |
 | `AGENTS.md` rows | its text | this text | both sentences |
 
 Each fix is small, but each one is a real clash, not a free merge. After the fix, run every test
@@ -273,6 +274,7 @@ Most tests start with `Buy milk` (completed), `Call home` (completed) and `Read 
 | `test_delete_completed_needs_the_csrf_token` | `Client(enforce_csrf_checks=True)` posts the ids with no token | status 403, and all three are still there | `NoReverseMatch` |
 | `test_delete_completed_form_on_the_list` | open the list | the page contains `<form class="delete-completed" method="post" action="/delete-completed/">` (exact text); `<button type="submit">Delete 2 completed to-dos</button>` (`html=True`); a hidden `ids` input for each completed id (`html=True`); and **no** hidden `ids` input for `Read chapter 3` | the page has no such form |
 | `test_delete_completed_button_says_one_to_do` | only one completed to-do, open the list | `<button type="submit">Delete 1 completed to-do</button>` (`html=True`) | the page has no such button |
+| `test_delete_completed_form_is_in_the_list_footer` | open the list | the form comes after `<div class="list-footer">`, and the page has no `<footer` | `ValueError`: no `<div class="list-footer">` (added after the first build; see "What happened") |
 
 Why `CaptureQueriesContext` and not `assertNumQueries(1)`: a later feature (accounts, 17) will add
 its own queries to every request. This test only says what matters: the view never reads each
@@ -327,10 +329,18 @@ passed. After the code: `Unit: 5 passed`, `Integration: 28 passed`, `CUJ: 1 pass
 test did not change), and `makemigrations --check --dry-run` said "No changes detected".
 
 Feature 12 (count) was not on this branch's base (`feature/due-date`), so this branch made
-`TodoQuerySet` and `<footer class="list-footer">` (with its CSS line) itself, as the plan says. Expect
+`TodoQuerySet` and `<div class="list-footer">` (with its CSS line) itself, as the plan says. Expect
 the merge clashes listed in "Merge conflicts, honestly".
 
 Small differences from the plan, with reasons:
+
+- **The footer is a `<div class="list-footer">`, not a `<footer>`.** After the first build, the
+  orchestrator said the shared footer (used by feature 12 too) is a `<div>`: a `<footer>` in
+  `<body>` is announced to screen readers as the footer of the whole page. The template, its CSS
+  line (now `.list-footer`) and this plan were changed. A new test,
+  `test_delete_completed_form_is_in_the_list_footer`, was written first; it failed with
+  `ValueError` (no `<div class="list-footer">`) on the `<footer>` version, and passes now. After
+  this change: `Unit: 5 passed`, `Integration: 29 passed`, `CUJ: 1 passed`.
 
 - **`urls.py`:** the new `path(...)` is split over three lines. The one-line version is longer than
   Ruff's line limit, and `ruff format` splits it.
