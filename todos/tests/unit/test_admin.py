@@ -1,9 +1,17 @@
 from django.contrib import admin
-from django.test import SimpleTestCase
+from django.contrib.auth import get_user_model
+from django.test import RequestFactory, SimpleTestCase
 
 from todos.admin import TodoAdmin
 from todos.forms import NotesField
 from todos.models import Todo
+
+
+def staff_request():
+    """A request from a superuser, not saved: the admin form asks who is looking."""
+    request = RequestFactory().get("/admin/")
+    request.user = get_user_model()(is_superuser=True, is_staff=True)
+    return request
 
 
 class TodoAdminTests(SimpleTestCase):
@@ -19,6 +27,6 @@ class TodoAdminTests(SimpleTestCase):
         model_admin = TodoAdmin(Todo, admin.site)
         self.assertIn("repeat", model_admin.list_display)
         self.assertIn("repeat", model_admin.list_filter)
-        form = model_admin.get_form(request=None)
+        form = model_admin.get_form(request=staff_request())
         self.assertIn("repeat", form.base_fields)
         self.assertNotIn("next_todo", form.base_fields)

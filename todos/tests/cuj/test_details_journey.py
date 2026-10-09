@@ -11,7 +11,12 @@ from django.test import TestCase
 from django.utils import timezone
 
 from todos.models import Todo
-from todos.tests.integration.helpers import page_parts, pane_element, show_date
+from todos.tests.integration.helpers import (
+    make_user,
+    page_parts,
+    pane_element,
+    show_date,
+)
 
 
 def link_named(page, name):
@@ -23,6 +28,8 @@ def link_named(page, name):
 
 class DetailsJourneyTests(TestCase):
     def test_plan_and_finish_a_todo_with_the_details_pane(self):
+        # There is no log-in page yet: log in without it.
+        self.client.force_login(make_user("ana"))
         page = self.client.get("/")
         self.assertContains(
             page, "<li>Nothing to do yet. Add something above.</li>", html=True

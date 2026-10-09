@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import MaxLengthValidator
 from django.db import models, transaction
@@ -11,6 +12,10 @@ NOTES_LIMIT = 500
 
 
 class TodoQuerySet(models.QuerySet):
+    def for_user(self, user):
+        """Only this person's to-dos. Every to-do query in a view starts here."""
+        return self.filter(owner=user)
+
     def remaining(self):
         """The to-dos that are not done yet."""
         return self.filter(done=False)
@@ -48,6 +53,13 @@ class Todo(models.Model):
         WEEKLY = rp.WEEKLY, "Every week"
         MONTHLY = rp.MONTHLY, "Every month"
 
+    # The person who added it. Only they can see or change it. Never in a form:
+    # the view sets it. CASCADE: deleting a user deletes their to-dos.
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="todos",
+    )
     title = models.CharField(max_length=200)
     done = models.BooleanField(default=False)
     due_date = models.DateField(null=True, blank=True)
@@ -118,6 +130,7 @@ class Todo(models.Model):
         # the day it was counted from, so it does not drift after that.
         day = self.repeat_day or start.day
         return {
+            "owner_id": self.owner_id,
             "title": self.title,
             "notes": self.notes,
             "priority": self.priority,

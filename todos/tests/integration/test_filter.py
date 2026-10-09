@@ -1,8 +1,12 @@
-from django.test import TestCase
 from django.urls import reverse
 
 from todos.models import Todo
-from todos.tests.integration.helpers import list_footer, page_parts, page_without_csrf
+from todos.tests.integration.helpers import (
+    LoggedInTestCase,
+    list_footer,
+    page_parts,
+    page_without_csrf,
+)
 
 # The empty message for each filter, as the whole <li> element.
 EMPTY_ALL = "<li>Nothing to do yet. Add something above.</li>"
@@ -29,10 +33,10 @@ def nav(chosen):
     return NAV.format(**marks)
 
 
-class FilterTests(TestCase):
+class FilterTests(LoggedInTestCase):
     def make_one_of_each(self):
-        self.active = Todo.objects.create(title="Buy milk")
-        self.completed = Todo.objects.create(title="Call home", done=True)
+        self.active = self.make_todo(title="Buy milk")
+        self.completed = self.make_todo(title="Call home", done=True)
 
     def forms_for(self, todo, query):
         """The exact actions of every POST form on the page, in order.
@@ -76,13 +80,13 @@ class FilterTests(TestCase):
 
     def test_empty_message_for_each_filter(self):
         with self.subTest(show="active"):
-            Todo.objects.create(title="Call home", done=True)
+            self.make_todo(title="Call home", done=True)
             response = self.client.get("/?show=active")
             self.assertEqual(page_parts(response).titles, [])
             self.assertContains(response, EMPTY_ACTIVE, count=1, html=True)
         Todo.objects.all().delete()
         with self.subTest(show="completed"):
-            Todo.objects.create(title="Buy milk")
+            self.make_todo(title="Buy milk")
             response = self.client.get("/?show=completed")
             self.assertEqual(page_parts(response).titles, [])
             self.assertContains(response, EMPTY_COMPLETED, count=1, html=True)
@@ -113,7 +117,7 @@ class FilterTests(TestCase):
         self.assertEqual(response["Location"], "/?show=completed")
 
     def test_toggle_on_active_leaves_the_list(self):
-        todo = Todo.objects.create(title="Buy milk")
+        todo = self.make_todo(title="Buy milk")
         response = self.client.post(
             reverse("todo_toggle", args=[todo.pk]) + "?show=active",
             {"done": "1"},
@@ -166,7 +170,7 @@ class FilterTests(TestCase):
     # whole table, not only what the filter shows.
 
     def test_count_shows_on_completed_view_with_nothing_completed(self):
-        Todo.objects.create(title="Buy milk")
+        self.make_todo(title="Buy milk")
         response = self.client.get("/?show=completed")
         self.assertEqual(page_parts(response).titles, [])
         self.assertContains(response, EMPTY_COMPLETED, count=1, html=True)
@@ -175,7 +179,7 @@ class FilterTests(TestCase):
         )
 
     def test_count_on_active_view_with_everything_completed(self):
-        todo = Todo.objects.create(title="Call home", done=True)
+        todo = self.make_todo(title="Call home", done=True)
         response = self.client.get("/?show=active")
         self.assertEqual(page_parts(response).titles, [])
         self.assertContains(response, EMPTY_ACTIVE, count=1, html=True)
@@ -186,7 +190,7 @@ class FilterTests(TestCase):
         )
 
     def test_delete_completed_keeps_the_filter(self):
-        todo = Todo.objects.create(title="Call home", done=True)
+        todo = self.make_todo(title="Call home", done=True)
         response = self.client.post(
             reverse("todo_delete_completed") + "?show=completed", {"ids": [todo.pk]}
         )

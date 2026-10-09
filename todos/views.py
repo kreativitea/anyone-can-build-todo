@@ -307,6 +307,8 @@ def todo_list(request):
 def todo_add(request):
     form = TodoForm(request.POST)
     if form.is_valid():
+        # The owner is never in the form: the person who adds it owns it.
+        form.instance.owner = request.user
         form.save()
         return back_to_list(request)
     return render(request, "todos/todo_list.html", page_context(request, form))

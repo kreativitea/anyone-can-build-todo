@@ -3,12 +3,12 @@
 from datetime import UTC, date, datetime
 
 from django.db import connection
-from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 
 from todos.models import Todo
 from todos.tests.integration.helpers import (
+    LoggedInTestCase,
     page_parts,
     page_without_csrf,
     pane_element,
@@ -18,12 +18,13 @@ from todos.tests.integration.helpers import (
 HINT = '<p class="pane-hint">Click a to-do\'s title to see its details.</p>'
 
 
-class DetailsPaneTests(TestCase):
+class DetailsPaneTests(LoggedInTestCase):
     def setUp(self):
-        self.milk = Todo.objects.create(
+        super().setUp()
+        self.milk = self.make_todo(
             title="Buy milk", due_date=date(2026, 10, 5), priority=Todo.Priority.HIGH
         )
-        self.home = Todo.objects.create(title="Call home", done=True)
+        self.home = self.make_todo(title="Call home", done=True)
         # auto_now_add ignores a value given at create, so set it afterwards.
         # 15:30 UTC on 1 October is 00:30 on 2 October in Tokyo.
         Todo.objects.filter(pk=self.milk.pk).update(
@@ -82,7 +83,7 @@ class DetailsPaneTests(TestCase):
         self.assertContains(response, pane, count=1, html=True)
 
     def test_title_is_escaped_in_the_pane(self):
-        bold = Todo.objects.create(title="<b>x</b>")
+        bold = self.make_todo(title="<b>x</b>")
         Todo.objects.filter(pk=bold.pk).update(
             created_at=datetime(2026, 10, 4, 1, 0, tzinfo=UTC)
         )

@@ -4,10 +4,14 @@ from django.test import TestCase
 
 from todos.forms import TodoEditForm, TodoForm
 from todos.models import Todo
-from todos.tests.integration.helpers import PRIORITY_SELECT
+from todos.tests.integration.helpers import PRIORITY_SELECT, make_user
 
 
 class TodoFormPriorityTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.user = make_user()
+
     def test_new_form_starts_on_medium(self):
         form = TodoForm()
         self.assertEqual(form["priority"].value(), Todo.Priority.MEDIUM)
@@ -29,6 +33,7 @@ class TodoFormPriorityTests(TestCase):
             with self.subTest(data=data):
                 form = TodoForm(data)
                 self.assertTrue(form.is_valid(), form.errors)
+                form.instance.owner = self.user
                 self.assertEqual(form.save().priority, Todo.Priority.MEDIUM)
 
     def test_unknown_priority_is_an_error(self):
@@ -46,14 +51,18 @@ class TodoFormPriorityTests(TestCase):
 
     def test_form_shows_the_saved_priority(self):
         # For "edit" (feature 4): a form for a saved to-do shows its priority.
-        todo = Todo.objects.create(title="Call home", priority=Todo.Priority.HIGH)
+        todo = Todo.objects.create(
+            owner=self.user, title="Call home", priority=Todo.Priority.HIGH
+        )
         self.assertEqual(
             TodoForm(instance=todo)["priority"].value(), Todo.Priority.HIGH
         )
 
     def test_editing_without_priority_makes_it_medium(self):
         # The rule "missing means Medium" holds for a saved to-do too.
-        todo = Todo.objects.create(title="Call home", priority=Todo.Priority.HIGH)
+        todo = Todo.objects.create(
+            owner=self.user, title="Call home", priority=Todo.Priority.HIGH
+        )
         TodoForm({"title": "y"}, instance=todo).save()
         todo.refresh_from_db()
         self.assertEqual(todo.priority, Todo.Priority.MEDIUM)
@@ -127,11 +136,15 @@ class TodoFormNotesTests(TestCase):
 
 
 class TodoFormRepeatTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.user = make_user()
+
     def test_missing_repeat_on_edit_becomes_none(self):
         # "Changes in behaviour", point 6: like priority, a post without
         # `repeat` saves the empty value ("none"), it does not keep the old one.
         todo = Todo.objects.create(
-            title="Bins", due_date=date(2026, 10, 12), repeat="weekly"
+            owner=self.user, title="Bins", due_date=date(2026, 10, 12), repeat="weekly"
         )
         form = TodoEditForm({"title": "Bins", "due_date": "2026-10-12"}, instance=todo)
         self.assertTrue(form.is_valid(), form.errors)
@@ -150,12 +163,18 @@ class TodoFormRepeatTests(TestCase):
         ]
         for data, day in cases:
             with self.subTest(data=data):
-                todo = TodoForm(data).save()
+                form = TodoForm(data)
+                form.instance.owner = self.user
+                todo = form.save()
                 self.assertEqual(todo.repeat_day, day)
 
     def test_edit_that_changes_the_date_remembers_the_new_day(self):
         todo = Todo.objects.create(
-            title="Rent", due_date=date(2027, 2, 28), repeat="monthly", repeat_day=31
+            owner=self.user,
+            title="Rent",
+            due_date=date(2027, 2, 28),
+            repeat="monthly",
+            repeat_day=31,
         )
         data = {"title": "Rent", "due_date": "2027-02-27", "repeat": "monthly"}
         TodoEditForm(data, instance=todo).save()
@@ -163,7 +182,9 @@ class TodoFormRepeatTests(TestCase):
         self.assertEqual(todo.repeat_day, 27)
 
     def test_edit_that_changes_the_repeat_remembers_the_day(self):
-        todo = Todo.objects.create(title="Rent", due_date=date(2027, 1, 30))
+        todo = Todo.objects.create(
+            owner=self.user, title="Rent", due_date=date(2027, 1, 30)
+        )
         data = {"title": "Rent", "due_date": "2027-01-30", "repeat": "monthly"}
         TodoEditForm(data, instance=todo).save()
         todo.refresh_from_db()
@@ -173,7 +194,11 @@ class TodoFormRepeatTests(TestCase):
         # A copy due 28 Feb that remembers the 31st: fixing a typo must not
         # move the day to the 28th.
         todo = Todo.objects.create(
-            title="Rnet", due_date=date(2027, 2, 28), repeat="monthly", repeat_day=31
+            owner=self.user,
+            title="Rnet",
+            due_date=date(2027, 2, 28),
+            repeat="monthly",
+            repeat_day=31,
         )
         data = {"title": "Rent", "due_date": "2027-02-28", "repeat": "monthly"}
         TodoEditForm(data, instance=todo).save()

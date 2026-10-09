@@ -8,7 +8,44 @@ import re
 from html.parser import HTMLParser
 from typing import NamedTuple
 
+from django.contrib.auth import get_user_model
+from django.test import Client, TestCase
 from django.utils.html import escape
+
+from todos.models import Todo
+
+# A test value only, for test users. Not a real password.
+TEST_PASSWORD = "plum-tree-river-42"
+
+
+def make_user(username="ana"):
+    """A saved user with the test password."""
+    return get_user_model().objects.create_user(username, password=TEST_PASSWORD)
+
+
+class LoggedInTestCase(TestCase):
+    """A test where "ana" is logged in. self.make_todo() makes her to-dos."""
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        cls.user = make_user("ana")
+
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.user)
+
+    def csrf_client(self):
+        """A second client, logged in as ana, that checks CSRF like a real browser."""
+        client = Client(enforce_csrf_checks=True)
+        client.force_login(self.user)
+        return client
+
+    def make_todo(self, **fields):
+        """A saved to-do, owned by ana unless `owner` says otherwise."""
+        fields.setdefault("owner", self.user)
+        return Todo.objects.create(**fields)
+
 
 CSRF_INPUT = re.compile(
     r'<input type="hidden" name="csrfmiddlewaretoken" value="[^"]*">'

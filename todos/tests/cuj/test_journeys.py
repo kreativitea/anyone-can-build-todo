@@ -13,6 +13,7 @@ from django.utils.html import escape
 from todos.models import Todo
 from todos.tests.integration.helpers import (
     link_href,
+    make_user,
     page_forms,
     page_parts,
     page_without_csrf,
@@ -45,9 +46,15 @@ def todo_row(todo, done=False, repeat="", progress=""):
 
 
 class JourneyTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.user = make_user("ana")
+
     def setUp(self):
         # Like a real browser: a request without the page's CSRF token fails.
         self.client = Client(enforce_csrf_checks=True)
+        # There is no log-in page yet: log in without it.
+        self.client.force_login(self.user)
 
     def press(self, page, button_text, lands_on=None, **typed):
         """Press the one button with exactly this name, as a browser would.
