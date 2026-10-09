@@ -2,9 +2,9 @@ from django.contrib import admin
 from django.contrib.auth import get_user_model
 from django.test import RequestFactory, SimpleTestCase
 
-from todos.admin import TodoAdmin
+from todos.admin import TodoAdmin, TodoListAdmin
 from todos.forms import NotesField
-from todos.models import Todo
+from todos.models import Todo, TodoList
 
 
 def staff_request():
@@ -30,3 +30,14 @@ class TodoAdminTests(SimpleTestCase):
         form = model_admin.get_form(request=staff_request())
         self.assertIn("repeat", form.base_fields)
         self.assertNotIn("next_todo", form.base_fields)
+
+
+class TodoListAdminTests(SimpleTestCase):
+    def test_list_owner_is_read_only_once_the_list_exists(self):
+        # A new owner would leave the to-dos with the old one (the OWNERSHIP
+        # rule: Todo.owner is always the list's owner). A new list needs one.
+        model_admin = TodoListAdmin(TodoList, admin.site)
+        request = staff_request()
+        editing = model_admin.get_readonly_fields(request, obj=TodoList(pk=1))
+        self.assertIn("owner", editing)
+        self.assertNotIn("owner", model_admin.get_readonly_fields(request, obj=None))

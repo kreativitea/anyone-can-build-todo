@@ -333,7 +333,7 @@ class CanaryTests(LoggedInTestCase):
         super().setUpTestData()
         ben = make_user("ben")
         # His list's name carries the word too: the lists <nav> must not show it.
-        secret = TodoList.objects.create(owner=ben, name=f"{CANARY} list")
+        cls.secret = secret = TodoList.objects.create(owner=ben, name=f"{CANARY} list")
         cls.bens = Todo.objects.create(
             todo_list=secret,
             title=f"{CANARY} title milk",
@@ -399,6 +399,17 @@ class CanaryTests(LoggedInTestCase):
                     self.delete_completed_url(),
                     {"ids": [str(self.bens.pk)]},
                     follow=True,
+                ),
+            )
+        )
+        # Moving her to-do into ben's list: refused, and the error page
+        # (with the list box) must not show his list's name.
+        pages.append(
+            (
+                "POST todo_edit, his list",
+                self.client.post(
+                    reverse("todo_edit", args=[self.mine.pk]),
+                    {"title": "Buy milk", "todo_list": str(self.secret.pk)},
                 ),
             )
         )

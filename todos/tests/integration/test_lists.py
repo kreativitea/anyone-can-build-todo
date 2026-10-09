@@ -31,7 +31,7 @@ NEW_LIST_URL = "/lists/new/"
 
 def lists_nav(lists, current=None):
     """The whole <nav> of the person's lists, exactly: one link per list, in
-    order, the open one marked, then "New list".
+    order, the open one marked, then "New list" (which remembers the open list).
     """
     links = ""
     for todo_list in lists:
@@ -39,7 +39,7 @@ def lists_nav(lists, current=None):
         links += f'<a href="{list_path(todo_list.pk)}"{mark}>{todo_list.name}</a>'
     return (
         '<nav class="lists" aria-label="Lists">'
-        f'{links}<a href="{NEW_LIST_URL}">New list</a>'
+        f'{links}<a href="{NEW_LIST_URL}?from={current.pk}">New list</a>'
         "</nav>"
     )
 
@@ -174,7 +174,10 @@ class ListPageTests(ListTestCase):
         parts = page_parts(response)
         self.assertEqual(parts.current_lists, ["Work"])
         self.assertEqual(parts.current_links, ["All"])  # the filter, as before
-        self.assertEqual(link_href(response, "New list"), NEW_LIST_URL)
+        # Review: "New list" remembers the list it came from, for its Cancel.
+        self.assertEqual(
+            link_href(response, "New list"), f"{NEW_LIST_URL}?from={self.work.pk}"
+        )
         self.assertEqual(
             link_href(response, "Rename or delete Work"), f"/lists/{self.work.pk}/edit/"
         )
@@ -430,3 +433,83 @@ class MoveTests(ListTestCase):
         )
         todo.refresh_from_db()
         self.assertEqual((todo.todo_list, todo.owner), (self.todo_list, self.user))
+
+
+class ReviewTests(ListTestCase):
+    """The security review's findings (each shown failing first)."""
+
+    def test_delete_button_counts_completed_todos_too(self):
+        self.make_todo(title="Open", todo_list=self.work)
+        self.make_todo(title="Done 1", todo_list=self.work, done=True)
+        self.make_todo(title="Done 2", todo_list=self.work, done=True)
+        response = self.client.get(f"/lists/{self.work.pk}/edit/")
+        self.assertContains(
+            response,
+            '<button type="submit">Delete list and its 3 to-dos</button>',
+            count=1,
+            html=True,
+        )
+
+    def test_head_works_on_the_list_pages(self):
+        for url in [NEW_LIST_URL, f"/lists/{self.work.pk}/edit/"]:
+            with self.subTest(url=url):
+                self.assertEqual(self.client.head(url).status_code, 200)
+
+    def test_an_empty_post_shows_this_field_is_required(self):
+        for url in [NEW_LIST_URL, f"/lists/{self.work.pk}/edit/"]:
+            with self.subTest(url=url):
+                response = self.client.post(url, {})
+                self.assertEqual(response.status_code, 200)
+                self.assertContains(
+                    response,
+                    '<ul class="errorlist" id="id_name_error">'
+                    "<li>This field is required.</li></ul>",
+                    count=1,
+                    html=True,
+                )
+        self.assertEqual(len(self.anas_lists()), 2)
+        self.work.refresh_from_db()
+        self.assertEqual(self.work.name, "Work")
+
+    def test_new_list_cancel_goes_back_to_the_list_it_came_from(self):
+        work = f"/lists/{self.work.pk}/"
+        cases = [
+            (f"?from={self.work.pk}", work),
+            (f"?from={self.secret.pk}", "/"),  # not hers: never her link
+            ("?from=999", "/"),
+            ("?from=abc", "/"),
+            ("?from=" + "9" * 30, "/"),
+            ("", "/"),
+        ]
+        for query, cancel in cases:
+            with self.subTest(query=query):
+                response = self.client.get(NEW_LIST_URL + query)
+                self.assertEqual(link_href(response, "Cancel"), cancel)
+
+    def test_new_list_error_page_keeps_where_it_came_from(self):
+        url = f"{NEW_LIST_URL}?from={self.work.pk}"
+        response = self.client.post(url, {"name": "work"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(page_post_forms(response)[0].action, url)
+        self.assertEqual(link_href(response, "Cancel"), f"/lists/{self.work.pk}/")
+
+    def test_new_list_with_from_goes_to_the_new_list(self):
+        response = self.client.post(
+            f"{NEW_LIST_URL}?from={self.work.pk}", {"name": "Shopping"}
+        )
+        shopping = TodoList.objects.get(name="Shopping")
+        self.assertEqual(response["Location"], f"/lists/{shopping.pk}/")
+
+    def test_admin_cannot_give_a_list_to_another_owner(self):
+        # Changing the owner would leave the to-dos with the old owner.
+        report = self.make_todo(title="Write report", todo_list=self.work)
+        admin = get_user_model().objects.create_superuser("admin", "admin@example.test")
+        self.client.force_login(admin)
+        response = self.client.post(
+            f"/admin/todos/todolist/{self.work.pk}/change/",
+            {"name": "Work", "owner": str(self.ben.pk), "_save": "Save"},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.work.refresh_from_db()
+        report.refresh_from_db()
+        self.assertEqual((self.work.owner, report.owner), (self.user, self.user))

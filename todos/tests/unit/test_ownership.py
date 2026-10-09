@@ -88,7 +88,9 @@ UNSCOPED = [
     re.compile(r"get_object_or_404\(\s*Subtask\b"),
     re.compile(r"get_list_or_404\(\s*Todo\b(?!\.objects\.for_user\()"),
     re.compile(r"get_list_or_404\(\s*Subtask\b"),
-    re.compile(r"\bmodel\s*=\s*(Todo|Subtask)\b"),
+    re.compile(r"\bmodel\s*=\s*(Todo|Subtask|TodoList)\b"),
+    # A model looked up by name skips every check above (only data migrations may).
+    re.compile(r"\bget_model\("),
     re.compile(r"\.model\.objects\b"),
 ]
 
@@ -114,8 +116,10 @@ ALLOWED = {
     # The ModelForms' Meta: a form reads no rows (the owner is never a field).
     ("todos/forms.py", "model = Todo"),
     ("todos/forms.py", "model = Subtask"),
+    ("todos/forms.py", "model = TodoList"),
     # A data migration runs once, on every row, before anyone is logged in.
     ("todos/data_migrations.py", "Todo.objects.filter(owner__isnull=True).delete()"),
+    ("todos/data_migrations.py", 'Todo = apps.get_model("todos", "Todo")'),
     (
         "todos/data_migrations.py",
         "Todo.objects.filter(todo_list__isnull=True).delete()",
@@ -198,6 +202,10 @@ class OwnerGuardTests(SimpleTestCase):
             "todo_list = get_object_or_404(TodoList, pk=list_pk, owner=request.user)",
             "TodoList._default_manager.get(pk=list_id)",
             "lists = get_list_or_404(TodoList, owner=user)",
+            "    model = TodoList",
+            "class ListDetail(DetailView): model = TodoList",
+            'TodoList = apps.get_model("todos", "TodoList")',
+            'lists = django_apps.get_model("todos.TodoList").objects.all()',
         ]:
             with self.subTest(line=line):
                 self.assertTrue(any(p.search(line) for p in UNSCOPED))
@@ -207,7 +215,6 @@ class OwnerGuardTests(SimpleTestCase):
             "step = get_object_or_404(todo.subtasks, pk=subtask_pk)",
             "SEARCH_MAX_LENGTH = Todo._meta.get_field('title').max_length",
             "todos = get_list_or_404(Todo.objects.for_user(request.user))",
-            "model = TodoList",
             "lists = TodoList.objects.for_user(request.user)",
             "first = TodoList.objects.owned_by(request.user).first()",
             "TodoList.objects.create_default(user)",

@@ -192,3 +192,82 @@ class TodoFormListFieldTests(ListTestCase):
         form = TodoEditForm({"title": "y"}, instance=todo, user=self.ana)
         self.assertTrue(form.is_valid(), form.errors)
         self.assertEqual(form.save().todo_list, self.work)
+
+
+class ListNameKeyTests(ListTestCase):
+    """Review (orchestrator decision): a list name is unique per owner after
+    NFKC and casefold, like search, where wide letters find normal ones. The
+    form and the database use the same key, `name_key`.
+    """
+
+    def test_name_key_is_nfkc_and_casefold(self):
+        cases = [
+            ("Work", "work"),
+            ("ＷＯＲＫ", "work"),
+            ("Straße", "strasse"),
+            ("Ärger", "ärger"),
+        ]
+        for number, (name, key) in enumerate(cases):
+            with self.subTest(name=name):
+                owner = make_user(f"person{number}")
+                made = TodoList.objects.create(owner=owner, name=name)
+                made.refresh_from_db()
+                self.assertEqual((made.name, made.name_key), (name, key))
+
+    def test_the_form_refuses_the_same_name_in_another_form(self):
+        from todos.forms import TodoListForm
+
+        TodoList.objects.create(owner=self.ana, name="Ärger")
+        for name, used in [
+            ("ＷＯＲＫ", "ＷＯＲＫ"),
+            ("ｗｏｒｋ", "ｗｏｒｋ"),
+            ("ärger", "ärger"),
+        ]:
+            with self.subTest(name=name):
+                form = TodoListForm({"name": name}, owner=self.ana)
+                self.assertEqual(
+                    form.errors, {"name": [f'You already have a list called "{used}".']}
+                )
+
+    def test_the_database_refuses_the_same_name_in_another_form(self):
+        TodoList.objects.create(owner=self.ana, name="Ärger")
+        for name in ["ＷＯＲＫ", "ｗｏｒｋ", "ÄRGER", "ärger"]:
+            with self.subTest(name=name):
+                with self.assertRaises(IntegrityError), transaction.atomic():
+                    TodoList.objects.create(owner=self.ana, name=name)
+
+    def test_renaming_keeps_the_key_right(self):
+        self.work.name = "Office"
+        self.work.save()
+        self.work.refresh_from_db()
+        self.assertEqual(self.work.name_key, "office")
+
+
+class ListNameCharacterTests(ListTestCase):
+    def test_list_form_refuses_control_characters(self):
+        from todos.forms import TodoListForm
+
+        for name in [
+            "Wo\nrk",
+            "Wo\trk",
+            "Wo\rrk",
+            "Wo\x07rk",
+            "Wo\u2028rk",
+            "Wo\x85rk",
+        ]:
+            with self.subTest(name=repr(name)):
+                form = TodoListForm({"name": name}, owner=self.ana)
+                self.assertEqual(
+                    form.errors["name"],
+                    [
+                        "A list name cannot have line breaks or other control characters."
+                    ],
+                )
+
+    def test_list_form_keeps_normal_letters_and_joiners(self):
+        from todos.forms import TodoListForm
+
+        for name in ["Einkäufe", "買い物", "👩‍💻 Code", "Work & play"]:
+            with self.subTest(name=name):
+                form = TodoListForm({"name": name}, owner=self.ana)
+                self.assertTrue(form.is_valid(), form.errors)
