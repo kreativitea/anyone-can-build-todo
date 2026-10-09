@@ -18,6 +18,7 @@ from todos.tests.integration.helpers import (
     pane_element,
     show_date,
     title_element,
+    toggle_form,
 )
 
 
@@ -78,8 +79,7 @@ def list_row(todo, progress=""):
         f"{title_element(todo)}{progress}"
         f'<a class="edit" href="/{todo.pk}/edit/" '
         f'aria-label="Edit {escape(todo.title)}">Edit</a>'
-        f'<form method="post" action="/{todo.pk}/toggle/">'
-        f'<button type="submit">{"Undo" if todo.done else "Done"}</button></form>'
+        f"{toggle_form(todo, todo.done)}"
         f'<form method="post" action="/{todo.pk}/delete/">'
         '<button type="submit">Delete</button></form>'
         "</li>"
@@ -259,7 +259,7 @@ class SubtaskTests(TestCase):
         # Done on the to-do does not tick its open step.
         self.client.post(self.url("subtask_done", self.bake), {"done": "0"})
         # After the rebase on repeating (19), this post sends {"done": "1"}.
-        self.client.post(reverse("todo_toggle", args=[self.cake.pk]))
+        self.client.post(reverse("todo_toggle", args=[self.cake.pk]), {"done": "1"})
         self.cake.refresh_from_db()
         self.assertTrue(self.cake.done)
         self.bake.refresh_from_db()
@@ -327,6 +327,34 @@ class SubtaskTests(TestCase):
                 self.assertEqual(self.step_states(), before)
                 self.assertEqual(Todo.objects.count(), 1)
 
+    def test_step_changes_mark_the_todo_edited(self):
+        # Owner decision: a change to the steps is an edit of the to-do, so
+        # Undo on a repeating to-do keeps a copy whose steps were changed.
+        cases = [
+            ("subtask_add", None, {"title": "Buy sugar"}),
+            ("subtask_done", self.bake, {"done": "1"}),
+            ("subtask_done", self.flour, {"done": "0"}),
+            ("subtask_delete", self.eggs, {}),
+        ]
+        for name, step, data in cases:
+            with self.subTest(name=name, data=data):
+                Todo.objects.filter(pk=self.cake.pk).update(edited=False)
+                response = self.client.post(self.url(name, step), data)
+                self.assertEqual(response.status_code, 302)
+                self.cake.refresh_from_db()
+                self.assertTrue(self.cake.edited)
+
+    def test_a_refused_step_change_does_not_mark_the_todo_edited(self):
+        for name, step, data in [
+            ("subtask_add", None, {"title": "   "}),
+            ("subtask_done", self.bake, {"done": "yes"}),
+        ]:
+            with self.subTest(name=name):
+                Todo.objects.filter(pk=self.cake.pk).update(edited=False)
+                self.client.post(self.url(name, step), data)
+                self.cake.refresh_from_db()
+                self.assertFalse(self.cake.edited)
+
     def test_step_actions_keep_the_list_settings(self):
         query = "?show=active&next=https://evil.example"
         cases = [
@@ -363,8 +391,8 @@ class SubtaskTests(TestCase):
         )
 
     def test_list_shows_step_progress(self):
-        # After the rebase on sort (9): add &sort=due to the address and the href.
-        query = "?show=active&q=cake"
+        # The to-do matches the filter, the search and the sort.
+        query = "?show=active&q=cake&sort=due"
         response = self.client.get("/" + query)
         self.assertContains(
             response, progress_link(self.cake, 1, 3, query), count=1, html=True
