@@ -1,8 +1,8 @@
 # Plan: user accounts (feature 17)
 
-Status: **approved**, with the owner's answers (below, "Owner answers"). Wave 4, built alone. The
+Status: **done.** Approved with the owner's answers (below, "Owner answers"). Wave 4, built alone. The
 first version was checked by an adversarial review (partly in a real browser). Every finding is
-fixed.
+fixed. Built in three commits (A, B, C); see "What happened".
 
 > **This changes the most basic idea of the app.** Today there are no accounts, and everyone who
 > opens the site sees the **same list**. After this feature, each person **signs up**, **logs in**,
@@ -633,4 +633,143 @@ bug.
    launch.
 
 Note for the orchestrator: CONVENTIONS.md says "Signed in as"; this plan uses "Logged in as", as
-the review asked. Please make the two the same.
+the review asked. Please make the two the same. (By the build, CONVENTIONS.md says "Logged in as"
+too.)
+
+## What happened
+
+Built on `main` after waves 1–3 (everything up to subtasks, `0006_subtask`), in three commits, as
+planned: **A** (the owner exists; every test logs in; green), **B** (the behaviour tests; red for
+the reasons in the tables), **C** (the feature; green). These are the places where the build is
+different from the plan, and why.
+
+1. **No real browser** (owner decision). Both journeys use Django's test client. `log_in(client,
+   username)` in `helpers.py` opens `/`, checks it lands on `/accounts/login/?next=/`, reads the
+   log-in form from the page and presses **Log in**. The existing journeys (`test_journeys.py`, and
+   the details journey) start with it. The new journey `test_sign_up_and_see_only_my_own_list`
+   follows the **Sign up** link and sends the real sign-up form (with CSRF checks on). Fields are
+   filled by their names (`username`, `password1`, `password2`); the labels (`Username:`,
+   `Password:`) are checked once in `test_log_in_form_has_its_labels`. In step A the journeys used
+   `force_login` (no cookie trick needed with the test client); in step B they switched to the
+   real form, so they failed in B with "/ did not show the log-in page".
+2. **Every view on today's `main` is scoped**, not only the plan's table: the list, count,
+   `has_todos`, completed ids, toggle, edit, delete, delete completed, `subtask_list`,
+   `subtask_add`, and `get_subtask_or_404` (now `get_subtask_or_404(request, pk, subtask_pk)`,
+   which returns `(todo, subtask)`). The steps page lists `todo.subtasks.all()` (it was
+   `Subtask.objects.filter(todo_id=pk)`). The view's own `mark_edited(pk)` (an unscoped
+   `Todo.objects.filter(pk=pk).update(...)`) became the model method `Todo.mark_edited()`, called
+   on a to-do already found through its owner. The details pane needed no change: its to-do comes
+   only from the scoped list (`test_their_selected_todo_shows_no_pane`).
+3. **The next copy copies `owner_id`, not `owner`.** A to-do built in a unit test without an
+   owner would crash on `self.owner` once the field is required. The field-copy test now sets and
+   reads each field by its `attname` (`owner_id` for the owner, sample `7`), so it still demands
+   that `next_values()` copies the owner.
+4. **`owner` stays an editable model field** (the admin can change it), so two existing tests
+   changed: the edit-form test leaves out `owner` with `done` ("the owner is never in a form"),
+   and the admin form test gives `get_form` a superuser request (the admin's user box asks who is
+   looking). `admin_save` in `test_repeat.py` sends the owner, and logs ana back in after.
+5. **The account bar's Log out form is on every page.** `page_parts(...).post_actions` leaves it
+   out, and the new `page_post_forms(response)` gives a page's `POST` forms without it. The
+   journey that lists every button on the steps page now starts with `"Log out"`.
+6. **The admin, pinned as Django 5.2 really does it** (the plan expected every admin page to go to
+   our log-in page). Django marks the admin's front page and `/admin/login/` "login not
+   required": `/admin/` goes to `/admin/login/?next=/admin/`. The other admin pages need log-in,
+   so `/admin/todos/todo/` goes to `/accounts/login/?next=/admin/todos/todo/`. A logged-in person
+   who is not staff is sent to the admin's log-in page. Tests: `test_admin_log_in_stays_open`,
+   `test_admin_is_closed_to_a_person_who_is_not_staff`.
+7. **More tests than the plan's tables:** a visitor's `GET` comes back to its page after log-in;
+   `next` to our own page is followed; a logged-in person on the log-in or sign-up page goes to
+   the list; the Log out form works with CSRF checks on; the footer is hidden when only another
+   person has to-dos; `subtask_done` and `subtask_delete` with my to-do and their step are 404;
+   the matrix also posts `done=0`; `test_every_url_is_in_the_matrix` also fails on a matrix name
+   that no longer exists; the guard has its own test with good and bad lines. The secret-key test
+   runs a new Python three times: no key with `DEBUG` off (refuses, `ImproperlyConfigured: Set
+   DJANGO_SECRET_KEY on a live server.`), a test key (starts), and a laptop (starts).
+8. **Test helpers** (in `helpers.py`): `TEST_PASSWORD`, `make_user`, `LoggedInTestCase` (with
+   `make_todo` and `csrf_client()`, a second logged-in client with CSRF checks), `log_in`,
+   `account_bar`, `count_elements`, `page_post_forms`, and `LOGIN_URL` / `SIGNUP_URL` /
+   `LOGOUT_URL`. The two `make` helpers in `test_search.py` and `test_sort.py` became methods, so
+   they make ana's to-dos.
+
+### Red and green
+
+- **Step A, the migration test** against a data migration whose body was `pass`: `IntegrityError:
+  NOT NULL constraint failed: new__todos_todo.owner_id` (step 3 cannot make the column required
+  while old rows have no owner). With the real body: 2 passed. Then the whole suite: CUJ 5,
+  Integration 249, Unit 109 passed.
+- **Step B:** Integration 256 passed, 53 failed, 1 error; Unit 113 passed, 1 failed; CUJ 6
+  failed. The reasons: the addresses `/accounts/...` answer 404 (no log-in page); a visitor gets
+  200 and the list; a visitor's add is an error (`Cannot assign AnonymousUser to Todo.owner`) and
+  their toggle, edit, delete and step posts change rows; ben's to-dos are in the list, the count,
+  the search, filter and sort, and the pane; delete completed deletes ben's; every row of the 404
+  matrix answers 302 or 200 and changes ben's rows; a live server without a key starts; the guard
+  lists 13 lines of `views.py`. The protecting tests passed (the mixed step row,
+  `test_my_todo_is_not_404`, `test_every_url_is_in_the_matrix`, `for_user`, the next copy's
+  owner, deleting a user, a posted owner) and were each shown failing against a deliberate bug
+  (below).
+- **Step C:** `make test`: Integration 287, Unit 114 passed. `make test-cuj`: CUJ 6 passed.
+  `make check`: every hook passed, "No changes detected", all tests OK.
+
+### Deliberate bugs, one at a time, each put back
+
+| Bug | Caught by |
+|---|---|
+| list without `for_user` | list, footer, search/filter/sort, pane tests; the guard |
+| count / completed / `has_todos` without `for_user` | count, footer tests; the guard |
+| `get_object_or_404(Todo, ...)` in toggle, edit, delete, `subtask_list`, `subtask_add`, `get_subtask_or_404` (six runs) | the 404 matrix each time; the guard each time |
+| delete completed without `for_user` | `test_delete_completed_never_deletes_theirs`; the guard |
+| a stray `Todo.objects.all()` in `todo_list` | the guard |
+| the `subtask_delete` row taken out of `MATRIX` | `test_every_url_is_in_the_matrix` |
+| `for_user` returns `self.all()` | `test_for_user_gives_only_their_todos` |
+| `next_values()` without the owner | `test_next_repeat_keeps_the_owner`, the field-copy test |
+| `on_delete=SET_NULL` | `test_deleting_a_user_deletes_their_todos` (an `IntegrityError`) |
+| `owner` in `TodoForm.Meta.fields` | `test_add_and_edit_ignore_a_posted_owner` |
+| `LoginView` allows `evil.example` | `test_login_never_goes_to_another_site` |
+| Django's plain `LoginRequiredMiddleware` | `test_visitor_post_changes_nothing_and_comes_back_to_the_list` (8 rows: `next` was the POST address) |
+| `LogoutView` without `login_not_required` | `test_logout_when_already_logged_out` |
+
+### The migration, checked
+
+- A database at `0006_subtask` with two old to-dos and one step: `migrate` ran `0007_todo_owner`,
+  `0008_delete_todos_without_owner` and `0009_todo_owner_required` with no error; then 0 to-dos
+  and 0 steps.
+- An empty database: `migrate` from nothing, no error. Then `migrate todos 0006` (all three
+  reversed) and `migrate` again: no error.
+- `test_owner_migration.py` does both on the test database in every run.
+
+**The recipe, for the merge queue** (when another branch also adds a migration after `0006`).
+Delete this branch's three files (`*_todo_owner.py`, `*_delete_todos_without_owner.py`,
+`*_todo_owner_required.py`), add `null=True` to `Todo.owner` in `models.py`, then:
+
+```bash
+uv run python manage.py makemigrations todos -n todo_owner
+uv run python manage.py makemigrations todos --empty -n delete_todos_without_owner
+#   In that empty file, add:
+#     from todos.data_migrations import delete_todos_without_owner
+#   and in operations:
+#     migrations.RunPython(delete_todos_without_owner, migrations.RunPython.noop),
+#   Now remove null=True from Todo.owner again, then:
+uv run python manage.py makemigrations todos -n todo_owner_required --noinput
+#   Expected: "Field 'owner' on model 'todo' given a default of NOT PROVIDED and must be
+#   corrected." The file must be one AlterField with no default.
+uv run python manage.py migrate
+uv run python manage.py makemigrations --check --dry-run   # "No changes detected"
+uv run python manage.py test todos.tests.integration.test_owner_migration
+```
+
+### Checked by eye
+
+Headless Chrome against `runserver` on a free port (a scratch database, stopped after):
+
+- **Log-in page, 1280 wide:** `Log in`, `Username:` and `Password:` with their boxes, the
+  **Log in** button, "New here? Sign up". No account bar.
+- **Sign-up page, 1280 wide:** `Sign up`, the three boxes with Django's help text (the four
+  password rules as a small grey list), the **Sign up** button, "Already have an account? Log in".
+- **The list as ana, 1280 wide:** the account bar at the top right, "Logged in as **ana**" and
+  **Log out**, above the two columns; only ana's three to-dos ("2 items left", "Delete 1
+  completed to-do"); ben's to-do is not there.
+- At the first try the bar was a flex row, and its gap made "as  ana" look like two spaces. It is
+  now plain right-aligned text with an inline form.
+- Narrow: Chrome's headless window is at least about 500 px wide, so a 375 px screenshot is cut
+  off on the right (an artefact of the tool). At 500 px both pages fit: the bar sits at the top
+  right, and the list keeps its full width.
