@@ -91,17 +91,44 @@ class TodoTests(TestCase):
         self.assertEqual(Todo.objects.count(), 0)
 
     def test_title_over_200_chars_is_not_added(self):
-        self.client.post(reverse("todo_add"), {"title": "a" * 201})
+        response = self.client.post(reverse("todo_add"), {"title": "a" * 201})
         self.assertEqual(Todo.objects.count(), 0)
+        self.assertContains(
+            response, "Ensure this value has at most 200 characters (it has 201)."
+        )
+
+    def test_empty_title_shows_an_error(self):
+        response = self.client.post(reverse("todo_add"), {"title": ""})
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "This field is required.")
+
+    def test_error_page_still_shows_the_list(self):
+        Todo.objects.create(title="Call home")
+        response = self.client.post(
+            reverse("todo_add"), {"title": "Buy milk", "due_date": "not-a-date"}
+        )
+        self.assertContains(response, "Call home")
+        self.assertTrue(response.context["form"].errors)
+
+    def test_past_due_date_is_allowed(self):
+        self.client.post(
+            reverse("todo_add"), {"title": "Buy milk", "due_date": "2000-01-01"}
+        )
+        self.assertEqual(Todo.objects.get().due_date, date(2000, 1, 1))
 
     def test_list_page_has_a_date_box(self):
         response = self.client.get(reverse("todo_list"))
-        self.assertContains(response, 'type="date"')
+        self.assertContains(
+            response,
+            '<input type="date" name="due_date" id="id_due_date">',
+            html=True,
+        )
 
     def test_due_date_is_shown_on_the_list(self):
-        Todo.objects.create(title="Buy milk", due_date=date(2026, 10, 12))
+        # A day with one digit: "5 Oct", not "05 Oct".
+        Todo.objects.create(title="Buy milk", due_date=date(2026, 10, 5))
         response = self.client.get(reverse("todo_list"))
-        self.assertContains(response, "due 12 Oct 2026")
+        self.assertContains(response, "due 5 Oct 2026")
 
     # Due date: protect what already works.
 
@@ -112,6 +139,4 @@ class TodoTests(TestCase):
     def test_no_due_date_shows_no_due_text(self):
         Todo.objects.create(title="Buy milk")
         response = self.client.get(reverse("todo_list"))
-        # ">due " is the start of the date text in the list. Plain "due " would
-        # also match the page's CSS, so look for the text right after its tag.
-        self.assertNotContains(response, ">due ")
+        self.assertNotContains(response, 'class="due"')
