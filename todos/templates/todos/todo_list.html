@@ -12,8 +12,10 @@
     form.add .errorlist { flex: 1 1 100%; }
     form.search { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-bottom: 1rem; }
     form.search input[type=search] { flex: 1 1 10rem; padding: 0.4rem; font-size: 1rem; }
-    nav.filters { display: flex; gap: 1rem; margin-bottom: 1rem; }
+    nav.filters { display: flex; flex-wrap: wrap; gap: 1rem; margin-bottom: 1rem; }
     nav.filters a[aria-current="page"] { font-weight: bold; text-decoration: none; color: inherit; }
+    nav.sort { display: flex; flex-wrap: wrap; gap: 1rem; margin-bottom: 1rem; }
+    nav.sort a[aria-current="true"] { font-weight: bold; text-decoration: none; color: inherit; }
     ul { list-style: none; padding: 0; }
     li { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem; border-bottom: 1px solid #ddd; }
     li .title { flex: 1; min-width: 0; overflow-wrap: anywhere; }
@@ -81,9 +83,17 @@
         {% if q %}<a href="{{ clear_search_url }}">Clear search</a>{% endif %}
       </form>
 
-      <nav class="filters" aria-label="Filter to-dos">
+      <nav class="filters" aria-labelledby="filter-label">
+        <span id="filter-label">Show:</span>
         {% for link in filter_links %}
           <a href="{{ link.url }}"{% if link.current %} aria-current="page"{% endif %}>{{ link.label }}</a>
+        {% endfor %}
+      </nav>
+
+      <nav class="sort" aria-labelledby="sort-label">
+        <span id="sort-label">Sort by:</span>
+        {% for link in sort_links %}
+          <a href="{{ link.url }}"{% if link.current %} aria-current="true"{% endif %}>{{ link.label }}</a>
         {% endfor %}
       </nav>
 

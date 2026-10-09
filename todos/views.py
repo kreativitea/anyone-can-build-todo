@@ -4,7 +4,8 @@ from typing import NamedTuple
 from urllib.parse import urlencode
 
 from django.db import DatabaseError, transaction
-from django.db.models import Q
+from django.db.models import F, Q
+from django.db.models.functions import Lower
 from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -70,6 +71,19 @@ FILTERS = [
 DEFAULT_FILTER = FILTERS[0]
 FILTER_BY_VALUE = {f.value: f for f in FILTERS}
 
+# The sort links: (the value in the address, the word on the page, the order).
+# The first one is the default: it needs no ?sort=. Every order ends with
+# created_at, then pk, so ties never jump. nulls_last puts "no due date" last.
+DUE_SOONEST_FIRST = F("due_date").asc(nulls_last=True)
+SORTS = [
+    ("created", "Date added", ("created_at", "pk")),
+    ("due", "Due date", (DUE_SOONEST_FIRST, "-priority", "created_at", "pk")),
+    ("priority", "Priority", ("-priority", DUE_SOONEST_FIRST, "created_at", "pk")),
+    ("title", "Title", (Lower("title"), "created_at", "pk")),
+]
+DEFAULT_SORT = SORTS[0][0]
+SORT_ORDERS = {value: order for value, _label, order in SORTS}
+
 # The longest search, in characters (code points): the title's max_length,
 # 200, so any title can be pasted whole. The server cuts the search to this.
 SEARCH_MAX_LENGTH = Todo._meta.get_field("title").max_length
@@ -116,6 +130,9 @@ def list_params(data):
     q = clean_search(data.get("q") or "")
     if q:
         params["q"] = q
+    # Only a value from SORTS is kept; the default is dropped, like show=all.
+    if data.get("sort") in SORT_ORDERS and data["sort"] != DEFAULT_SORT:
+        params["sort"] = data["sort"]
     # `selected` is always the last key: later checks (search, sort) go above.
     selected = clean_id(data.get("selected"))
     if selected is not None:
@@ -183,6 +200,25 @@ def filter_links(params):
     ]
 
 
+def sort_todos(todos, params):
+    """The to-dos in the chosen order. Ties keep the order they were added."""
+    return todos.order_by(*SORT_ORDERS[params.get("sort", DEFAULT_SORT)])
+
+
+def sort_links(params):
+    """The Sort by links, each one keeping the other parameters."""
+    chosen = params.get("sort", DEFAULT_SORT)
+    return [
+        {
+            "label": label,
+            "url": reverse("todo_list")
+            + list_query(list_params({**params, "sort": value})),
+            "current": value == chosen,
+        }
+        for value, label, _order in SORTS
+    ]
+
+
 def without_selected(params):
     """The list parameters without the selection."""
     return {k: v for k, v in params.items() if k != "selected"}
@@ -225,6 +261,7 @@ def page_context(request, form):
     todos = Todo.objects.all()
     todos = filter_todos(todos, params)
     todos = search_todos(todos, params)
+    todos = sort_todos(todos, params)
     # Everything that changes `todos` (search, sort, ...) goes above this line.
     selected = selected_todo(todos, params)
     if selected is None:
@@ -243,6 +280,7 @@ def page_context(request, form):
         "empty_message": chosen_filter(params).empty_message,
         "list_query": list_query(params),
         "filter_links": filter_links(params),
+        "sort_links": sort_links(params),
         "selected": selected,
         "select_base": select_base(params),
         "close_url": reverse("todo_list") + list_query(without_selected(params)),

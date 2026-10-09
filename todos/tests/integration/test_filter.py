@@ -12,7 +12,8 @@ EMPTY_MESSAGES = [EMPTY_ALL, EMPTY_ACTIVE, EMPTY_COMPLETED]
 
 # The filter links, as the whole <nav> element, for each chosen filter.
 NAV = (
-    '<nav class="filters" aria-label="Filter to-dos">'
+    '<nav class="filters" aria-labelledby="filter-label">'
+    '<span id="filter-label">Show:</span>'
     '<a href="/"{all}>All</a>'
     '<a href="/?show=active"{active}>Active</a>'
     '<a href="/?show=completed"{completed}>Completed</a>'
