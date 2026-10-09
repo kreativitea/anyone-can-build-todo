@@ -152,17 +152,23 @@ def page_context(request, form):
     return {
         "todos": Todo.objects.all(),
         "form": form,
-        "completed_ids": list(Todo.objects.completed().values_list("pk", flat=True)),
+        "completed_ids": list(
+            Todo.objects.completed()
+            .order_by("created_at", "pk")
+            .values_list("pk", flat=True)[:MAX_DELETE_AT_ONCE]
+        ),
     }
 ```
 
 `values_list("pk", flat=True)` asks only for the ids, as a list of numbers: `[3, 7]`. `list(...)`
 runs the query once, so the template can count it and loop over it with no second query.
+`[:MAX_DELETE_AT_ONCE]` keeps the oldest 500 (added after code review; see Open question 2).
 
 **A new view, at the end of the file:**
 
 ```python
-# A real id is a plain number. A longer one cannot be a row, and is too big for SQLite.
+# A real id is a plain number. 18 digits always fit in SQLite's 64-bit integer;
+# longer values may overflow.
 MAX_ID_DIGITS = 18
 
 
@@ -268,13 +274,15 @@ Most tests start with `Buy milk` (completed), `Call home` (completed) and `Read 
 | `test_delete_completed_removes_the_completed_ones_seen` | post the ids of the two completed to-dos | only `Read chapter 3` is left, and the answer redirects to `todo_list` (`assertRedirects`) | `NoReverseMatch`: no address named `todo_delete_completed` |
 | `test_completed_after_the_page_loaded_survives` | post only `Buy milk`'s id (as if `Call home` became completed later) | `Call home` is still there | `NoReverseMatch` |
 | `test_open_todo_is_never_deleted` | post the id of `Read chapter 3` (open) | nothing is deleted | `NoReverseMatch` |
-| `test_bad_ids_are_ignored` | post `abc`, an empty value, `²`, `"9" * 30`, and `Buy milk`'s id | status 302 (not 500), and only `Buy milk` is gone | `NoReverseMatch` |
+| `test_bad_ids_are_ignored` | post `abc`, an empty value, `²`, `"9" * 19`, `"9" * 30`, and `Buy milk`'s id (19 digits pins the 18-digit cap) | status 302 (not 500), and only `Buy milk` is gone | `NoReverseMatch` |
 | `test_delete_completed_does_not_load_each_todo` | post both completed ids inside `CaptureQueriesContext(connection)` | at least one captured query starts with `DELETE`, and **no** query starts with `SELECT` and reads the `todos_todo` table | `NoReverseMatch` |
 | `test_get_cannot_delete_completed` | `GET` to `todo_delete_completed` | status 405, and all three to-dos are still there | `NoReverseMatch` |
 | `test_delete_completed_needs_the_csrf_token` | `Client(enforce_csrf_checks=True)` posts the ids with no token | status 403, and all three are still there | `NoReverseMatch` |
-| `test_delete_completed_form_on_the_list` | open the list | the page contains `<form class="delete-completed" method="post" action="/delete-completed/">` (exact text); `<button type="submit">Delete 2 completed to-dos</button>` (`html=True`); a hidden `ids` input for each completed id (`html=True`); and **no** hidden `ids` input for `Read chapter 3` | the page has no such form |
-| `test_delete_completed_button_says_one_to_do` | only one completed to-do, open the list | `<button type="submit">Delete 1 completed to-do</button>` (`html=True`) | the page has no such button |
-| `test_delete_completed_form_is_in_the_list_footer` | open the list | the form comes after `<div class="list-footer">`, and the page has no `<footer` | `ValueError`: no `<div class="list-footer">` (added after the first build; see "What happened") |
+| `test_delete_completed_form_on_the_list` | open the list | the whole form, exactly, once (`assertInHTML`, with the CSRF input taken out): `action="/delete-completed/"`, one hidden `ids` input for each completed id and none other, and `<button type="submit">Delete 2 completed to-dos</button>` | the page has no such form |
+| `test_delete_completed_button_says_one_to_do` | only one completed to-do, open the list | the whole form, exactly, with `Delete 1 completed to-do` | the page has no such form |
+| `test_delete_completed_form_is_in_the_list_footer` | open the list | the whole `<div class="list-footer">`, exactly: the count, then the form | no such footer (added after the first build; see "What happened") |
+| `test_the_form_on_the_page_works_with_csrf_checks_on` | `Client(enforce_csrf_checks=True)` gets the page, reads the CSRF token and the ids from the form, and posts them | status 302, and only `Read chapter 3` is left | fails if the form has no `{% csrf_token %}` (added after code review) |
+| `test_at_most_500_are_offered_at_once` | 501 completed to-dos | the form has the oldest 500; posting them leaves 1, and the page then offers that 1 | the page offers 501 (added after code review) |
 
 Why `CaptureQueriesContext` and not `assertNumQueries(1)`: a later feature (accounts, 17) will add
 its own queries to every request. This test only says what matters: the view never reads each
@@ -288,7 +296,7 @@ purpose, and say why.
 
 | Test | What it checks |
 |---|---|
-| `test_no_delete_completed_form_when_nothing_is_completed` | only `Read chapter 3` (open): the page does not contain `class="delete-completed"` |
+| `test_no_delete_completed_form_when_nothing_is_completed` | only `Read chapter 3` (open): the whole footer, exactly, is the count and no form |
 
 Every test that exists before this change must also still pass.
 
@@ -313,8 +321,11 @@ Every test that exists before this change must also still pass.
    `/delete-completed/confirm/`, a `GET` page that lists the completed to-dos, says "This cannot be
    undone", and has the same `POST` form and a Cancel link. The `/delete-completed/` address and its
    tests stay as they are.)
-2. **Very long lists.** Django refuses a form with more than 1,000 fields (status 400). So one click
-   can delete at most about 999 completed to-dos. **Decided: the owner accepts this limit.**
+2. **Very long lists.** Django refuses a form with more than 1,000 fields (status 400), and then
+   **nothing** is deleted. The owner first accepted this. Code review showed that with 1,000 or
+   more completed to-dos the button would then never work. **Decided (orchestrator): the page
+   offers at most the oldest 500** (`MAX_DELETE_AT_ONCE` in `views.py`). The button says
+   `Delete 500 completed to-dos`, and the next click deletes the rest.
 3. **Feature 8 (filter).** After the delete, the browser goes to the plain list, so a chosen filter
    is lost. Feature 8 should decide this once for add, toggle, delete and delete completed together.
 
@@ -355,3 +366,42 @@ Small differences from the plan, with reasons:
   rewrites Python code blocks inside Markdown files. It changed the `urls.py` example in this plan
   into wrong code, so that change was undone. The commit checks only format `.py` files, so they
   are safe.
+
+### The rebase onto `main`
+
+Due date and count were merged into `main`, and this branch was rebased onto it. The clashes were
+the ones listed in "Merge conflicts, honestly", and each was fixed by keeping both:
+
+- `models.py`: one `TodoQuerySet` with `remaining()` and then `completed()`.
+- `page_context`: count's `has_todos` and `remaining_count`, then `completed_ids`.
+- The template: count's footer, shown only when `has_todos`, holds the count `<p>` and then the
+  form. Count's CSS line for `.list-footer` was kept; this branch's `margin-top` line was dropped.
+  The button only shows when a to-do is completed, so there is always a to-do, and the footer is
+  always there when the button is.
+- `AGENTS.md`: the rows say both.
+
+**Count's tests were changed on purpose.** Three of them compared the whole footer, exactly. With
+a completed to-do, the footer now also holds the delete button, so they failed. They now name the
+completed to-dos, and the expected footer has the form too. The CSRF token is different every time
+the page is drawn, so the tests take the token input out before they compare (`page_without_csrf`).
+
+### Code review
+
+Four findings, fixed as new commits. The tests came first:
+
+1. **A missing `{% csrf_token %}` passed every test.** New test
+   `test_the_form_on_the_page_works_with_csrf_checks_on` reads the token and ids from the page and
+   posts them with CSRF checks on. With the token line taken out of the template, it failed:
+   `the delete-completed form has no CSRF token`.
+2. **The 18-digit cap was not pinned.** `test_bad_ids_are_ignored` also posts 19 digits now. With
+   `MAX_ID_DIGITS = 19`, it failed with `OverflowError: Python int too large to convert to SQLite
+   INTEGER`. The comment above the cap was made exact.
+3. **1,000 or more completed to-dos made the button useless** (see Open question 2). New test
+   `test_at_most_500_are_offered_at_once`. Before the fix, it failed: the page offered
+   `Delete 501 completed to-dos`. The fix: `page_context` keeps the oldest 500
+   (`order_by("created_at", "pk")`, `pk` to break a tie).
+4. **Loose checks.** The form, footer and no-form tests now compare the whole element, exactly
+   (`assertInHTML`, `count=1`), instead of pieces of text and page-wide "not on the page" checks.
+
+After the review fixes: `Unit: 7 passed`, `Integration: 42 passed`, `CUJ: 1 passed`, and
+`make check` passed.
