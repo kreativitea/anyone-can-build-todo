@@ -9,11 +9,11 @@ is: 5 due date → **12 count** → 11 clear completed → 8 filter.
 merged into `main`. So on our starting point:
 
 - `todos/forms.py` has `TodoForm`.
-- `todos/views.py` has a shared helper, `page_context(form)`. It makes the dictionary the page
+- `todos/views.py` has a shared helper, `page_context(request, form)`. It makes the dictionary the page
   needs, with one key per line:
 
   ```python
-  def page_context(form):
+  def page_context(request, form):
       return {
           "todos": Todo.objects.all(),
           "form": form,
@@ -61,9 +61,11 @@ When a person presses Done, the number goes down by one. When they press Undo, i
 - **The same count on the error page.** When the add form has a mistake (for example a bad date),
   `todo_add` shows the page again. Because both views use `page_context`, the count is there
   without any more work.
-- **Where on the page:** a `<footer class="list-footer">` just after the list. A **footer** is an
-  HTML element for the bottom part of a section. Feature 11 (clear completed) will put its button
-  in the same footer, next to the count.
+- **Where on the page:** a `<div class="list-footer">` just after the list. We call it "the
+  footer", but it is a plain `<div>`, not the HTML `<footer>` element: a `<footer>` placed directly
+  in `<body>` is read by a screen reader as the footer of the **whole page** (its "contentinfo"
+  landmark), which this is not. Feature 11 (clear completed) will put its button in the same
+  footer, next to the count.
 - **No `aria-live`.** `aria-live` tells a screen reader (a program that reads the page aloud) to
   say a change on the page without the person moving to it. That only matters when a page changes
   **without** loading again. Here every button loads the whole page again, so a screen reader starts
@@ -124,7 +126,7 @@ class Todo(models.Model):
 Add two keys **inside** `page_context`, one per line. Nothing else in `views.py` changes:
 
 ```python
-def page_context(form):
+def page_context(request, form):
     return {
         "todos": Todo.objects.all(),
         "form": form,
@@ -147,9 +149,9 @@ Just **after** `</ul>`, add:
 
 ```html
 {% if has_todos %}
-  <footer class="list-footer">
+  <div class="list-footer">
     <p class="count">{{ remaining_count }} item{{ remaining_count|pluralize }} left</p>
-  </footer>
+  </div>
 {% endif %}
 ```
 
@@ -203,14 +205,19 @@ These only check the **wiring**: that the number reaches the page, in the right 
 places. Put them in a new class `CountTests` in the same file. Features 11 and 8 add tests to this
 file at the same time, and separate classes clash less.
 
-Every check on the count matches the **whole element**, for example:
+Every check on the count matches the **whole footer**, wrapper and all, for example:
 
 ```python
-self.assertContains(response, '<p class="count">2 items left</p>', html=True)
+self.assertContains(
+    response,
+    '<div class="list-footer"><p class="count">2 items left</p></div>',
+    html=True,
+)
 ```
 
 With `html=True`, Django compares whole HTML elements, not pieces of text. So a check for
-`1 item left` can never match `11 items left` by mistake.
+`1 item left` can never match `11 items left` by mistake, and a change to the wrapper fails the
+test.
 
 **Tests for new behaviour.** These must **fail** before the change:
 
@@ -220,13 +227,19 @@ With `html=True`, Django compares whole HTML elements, not pieces of text. So a 
 | `test_count_says_item_for_one` | 1 to-do, not done | the page has `<p class="count">1 item left</p>` | `AssertionError`: the page has no count yet |
 | `test_count_says_items_for_zero` | 1 to-do, done | the page has `<p class="count">0 items left</p>` | `AssertionError`: the page has no count yet |
 | `test_count_is_on_the_error_page` | 1 to-do; post title `Buy milk` with date `not-a-date` | status 200, and the page has `<p class="count">1 item left</p>` | `AssertionError`: the error page has no count yet |
+| `test_count_comes_after_the_list` (added after review) | 1 to-do | `class="count"` is on the page, and comes after `</ul>` | `AssertionError`: the page has no count yet |
+| `test_count_follows_done_and_undo` (added after review) | 2 to-dos | `POST` toggle on one, follow the redirect: `1 item left`; toggle again: `2 items left` | `AssertionError`: the page has no count yet |
+| `test_the_database_does_the_counting` (added after review) | 1 to-do | while the list page loads (`CaptureQueriesContext`), one SQL question is a `COUNT` on `todos_todo`. Not `assertNumQueries`: later features add questions. | `AssertionError`: no `COUNT` is asked yet |
+
+(In the table above, every `<p class="count">…</p>` is checked inside its whole
+`<div class="list-footer">…</div>`, as shown before the table.)
 
 **Tests that protect what already works.** These **pass** before the change, and must still pass
 after:
 
 | Test | What it checks |
 |---|---|
-| `test_no_count_when_the_list_is_empty` (new) | with no to-dos: the page says `Nothing to do yet`, and does **not** contain the text `item left`, the text `items left`, or `<footer`. It checks the words a person would see, not only a class name. |
+| `test_no_count_when_the_list_is_empty` (new) | with no to-dos: the page says `Nothing to do yet`, and does **not** contain the text `item left`, the text `items left`, `class="count"` or `class="list-footer"`. It checks both the words a person would see and the elements. |
 | `test_list_page_loads` (already there) | the page still loads with status 200 and says `Nothing to do yet`. |
 
 Every test that exists before this change must also still pass.
@@ -252,7 +265,7 @@ this note to feature 8's builder.
 
    (`make worktree` starts from the local `main`, which may be old. That is why we use `git`
    directly here.) Check that `todos/forms.py` and `page_context` are there.
-2. Write the two unit tests and the five integration tests. Run `make test`: the two unit tests
+2. Write the two unit tests and the integration tests. Run `make test`: the two unit tests
    fail with `AttributeError`, the four new-behaviour integration tests fail with `AssertionError`,
    and the two protecting tests pass. Show this to the person.
 3. Add `TodoQuerySet` and `objects = TodoQuerySet.as_manager()` to `models.py`. Run `make test`:
@@ -284,11 +297,37 @@ and `make check` passed (no migration needed: `makemigrations --check` said "No 
 
 Small differences from the plan, and why:
 
-- **`page_context` takes `request` too.** The plan shows `page_context(form)`. On the branch we
-  started from, it is already `page_context(request, form)` (added for the filter feature). The two
-  new keys went inside it, exactly as planned; only the signature differs.
+- **`page_context` takes `request` too.** The approved plan showed `page_context(form)`. On the
+  branch we started from, it is already `page_context(request, form)` (added for the filter
+  feature). The two new keys went inside it, exactly as planned. The plan text above now shows
+  `page_context(request, form)`.
 - **The branch.** The plan says to start from `origin/main` with the due date merged. The due date
   was not merged yet, so this branch (`feature/count`) starts from `origin/feature/due-date`, and
   will be moved onto `main` after the due date merges.
-- **Step 7 (check by hand in the browser) was not done.** The integration tests check the same
-  things (2 items left, 0 items left, no footer when empty) through Django's test client.
+- **Step 7 (check by hand in the browser) was not done** by the builder. It is still to do, by a
+  person, before the merge.
+
+### After the review
+
+An adversarial code review found gaps in the tests. These were fixed as new commits on the same
+branch:
+
+1. **`<footer>` became `<div class="list-footer">`.** A `<footer>` directly in `<body>` is the
+   page's "contentinfo" landmark for a screen reader, which is wrong here (orchestrator's decision).
+   The CSS selector `.list-footer` did not need to change.
+2. **The wrapper and the position are now tested.** Every count check matches the whole
+   `<div class="list-footer"><p class="count">…</p></div>`, and `test_count_comes_after_the_list`
+   checks the count comes after `</ul>`.
+3. **"The database counts" is now tested** with `test_the_database_does_the_counting`.
+4. **Done and Undo are tested through `todo_toggle`** with `test_count_follows_done_and_undo`.
+5. **The empty-list test** now checks that `class="count"` and `class="list-footer"` are absent,
+   not `<footer`.
+
+Each new or changed test was first shown to fail: the wrapper tests failed against the old
+`<footer>`, and then each test was run against a deliberate bug, put in and taken out again:
+the count moved above the list (fails `test_count_comes_after_the_list`); the wrapper changed to
+`<section>` (fails the 5 whole-footer tests); a Python loop instead of `.count()` (fails
+`test_the_database_does_the_counting`); counting done to-dos too (fails
+`test_count_follows_done_and_undo` and two others); a footer with no words on an empty list
+(fails `test_no_count_when_the_list_is_empty`). After the fix: Unit 6 passed, Integration 26
+passed, CUJ 1 passed, and `make check` passed.
