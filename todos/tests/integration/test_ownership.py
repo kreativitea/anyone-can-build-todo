@@ -55,6 +55,8 @@ MATRIX = [
     ("todo_toggle", "post", {"done": "1"}),
     ("todo_toggle", "post", {"done": "0"}),
     ("todo_delete", "post", {}),
+    ("todo_move", "post", {"direction": "up"}),
+    ("todo_move", "post", {"direction": "down"}),
     ("todo_edit", "get", {}),
     (
         "todo_edit",

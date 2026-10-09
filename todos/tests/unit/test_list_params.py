@@ -266,7 +266,8 @@ class SortParamsTests(SimpleTestCase):
     # Sort: new behaviour.
 
     def test_list_params_keeps_the_sort(self):
-        for value in ["due", "priority", "title"]:
+        # Reorder (16): "My order" is sort=manual.
+        for value in ["due", "priority", "title", "manual"]:
             with self.subTest(sort=value):
                 self.assertEqual(
                     list_params(QueryDict(f"sort={value}")), {"sort": value}
@@ -307,6 +308,11 @@ class SortParamsTests(SimpleTestCase):
                     "url": "/lists/1/?show=active&sort=title",
                     "current": False,
                 },
+                {
+                    "label": "My order",
+                    "url": "/lists/1/?show=active&sort=manual",
+                    "current": False,
+                },
             ],
         )
         chosen = [
@@ -323,6 +329,7 @@ class SortParamsTests(SimpleTestCase):
                 "/lists/1/?sort=due&selected=5",
                 "/lists/1/?sort=priority&selected=5",
                 "/lists/1/?sort=title&selected=5",
+                "/lists/1/?sort=manual&selected=5",
             ],
         )
 

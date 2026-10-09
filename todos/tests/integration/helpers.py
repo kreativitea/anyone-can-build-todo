@@ -566,6 +566,36 @@ def toggle_form(todo, done=False, query=""):
     )
 
 
+def move_form(todo, query="", up=True, down=True):
+    """A row's Move up / Move down form (reorder, 16), exactly, without the CSRF token.
+
+    `up=False` (the first row) or `down=False` (the last row) draws that
+    button `disabled`. `query` is the list query, like "?sort=manual".
+    """
+    title = escape(todo.title)
+    return (
+        f'<form class="move" method="post" action="/{todo.pk}/move/{escape(query)}">'
+        f'<button type="submit" name="direction" value="up" aria-label="Move {title} up" '
+        f'title="Move up"{"" if up else " disabled"}>↑</button>'
+        f'<button type="submit" name="direction" value="down" aria-label="Move {title} down" '
+        f'title="Move down"{"" if down else " disabled"}>↓</button>'
+        "</form>"
+    )
+
+
+def row_html(response, todo):
+    """The HTML of the one <li> of `todo`, without the CSRF tokens.
+
+    A row has no <li> inside it, so it ends at the first </li>. A check
+    inside one row is exact; a check on the whole page is not.
+    """
+    pattern = re.compile(rf'<li id="todo-{todo.pk}"[^>]*>.*?</li>', re.DOTALL)
+    found = pattern.findall(page_without_csrf(response))
+    if len(found) != 1:
+        raise AssertionError(f"{len(found)} rows for to-do {todo.pk}, not 1")
+    return found[0]
+
+
 def pane_element(
     todo,
     *,

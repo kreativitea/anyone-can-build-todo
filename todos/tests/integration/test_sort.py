@@ -34,6 +34,7 @@ LINKS = [
     ("due", "Due date"),
     ("priority", "Priority"),
     ("title", "Title"),
+    ("manual", "My order"),  # reorder (16): the last link
 ]
 CURRENT = ' aria-current="true"'
 

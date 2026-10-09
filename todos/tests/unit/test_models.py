@@ -5,7 +5,7 @@ from django.core.exceptions import ValidationError
 from django.test import TestCase
 from django.utils import timezone
 
-from todos.models import Todo
+from todos.models import Todo, TodoList
 from todos.tests.integration.helpers import first_list, make_user
 
 
@@ -218,3 +218,114 @@ class RepeatModelTests(TestCase):
         copy = todo.next_copy()
         self.assertEqual((copy.due_date, copy.repeat_day), (date(2027, 2, 28), 31))
         self.assertEqual(copy.next_copy().due_date, date(2027, 3, 31))
+
+
+class PositionModelTests(TestCase):
+    """Reorder (16): each to-do has a place (`position`) in its list's "My order"."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.user = make_user()
+        cls.todo_list = first_list(cls.user)
+        cls.work = TodoList.objects.create(owner=cls.user, name="Work")
+
+    def make(self, title, todo_list=None, **fields):
+        return Todo.objects.create(
+            todo_list=todo_list or self.todo_list, title=title, **fields
+        )
+
+    def position(self, todo):
+        return Todo.objects.get(pk=todo.pk).position
+
+    def titles_in_my_order(self, todo_list):
+        rows = Todo.objects.filter(todo_list=todo_list).in_my_order()
+        return list(rows.values_list("title", flat=True))
+
+    def bulk_make(self, title, todo_list=None):
+        """A to-do made with bulk_create, which does not call save(): no position."""
+        [todo] = Todo.objects.bulk_create(
+            [Todo(todo_list=todo_list or self.todo_list, owner=self.user, title=title)]
+        )
+        return todo
+
+    def test_new_todo_goes_to_the_end_of_its_own_list(self):
+        for title in ["A1", "A2"]:
+            self.make(title)
+        for title in ["B1", "B2", "B3", "B4", "B5"]:
+            self.make(title, todo_list=self.work)
+        self.assertEqual(self.position(self.make("A3")), 3)
+
+    def test_moving_to_another_list_goes_to_the_end(self):
+        milk = self.make("Buy milk")
+        for title in ["B1", "B2"]:
+            self.make(title, todo_list=self.work)
+        loaded = Todo.objects.get(pk=milk.pk)  # read from the database
+        loaded.todo_list = self.work
+        loaded.save()
+        self.assertEqual(self.position(milk), 3)
+        self.assertEqual(self.titles_in_my_order(self.work), ["B1", "B2", "Buy milk"])
+
+    def test_saving_again_in_the_same_list_keeps_the_position(self):
+        self.make("A1")
+        milk = self.make("Buy milk")
+        self.make("A3")
+        loaded = Todo.objects.get(pk=milk.pk)
+        loaded.title = "Buy oat milk"
+        loaded.save()
+        self.assertEqual(self.position(milk), 2)
+
+    def test_save_with_update_fields_writes_the_new_position(self):
+        self.make("A1")
+        todo = self.bulk_make("No place")
+        loaded = Todo.objects.get(pk=todo.pk)
+        self.assertIsNone(loaded.position)
+        loaded.done = True
+        loaded.save(update_fields=["done"])
+        loaded.refresh_from_db()
+        self.assertEqual((loaded.done, loaded.position), (True, 2))
+
+    def test_empty_position_sorts_last_in_my_order(self):
+        self.make("A1")
+        self.bulk_make("No place")
+        self.make("A3")
+        self.assertEqual(
+            self.titles_in_my_order(self.todo_list), ["A1", "A3", "No place"]
+        )
+
+    def test_the_next_repeating_copy_goes_to_the_end(self):
+        bins = self.make("Bins", repeat="weekly", due_date=date(2026, 10, 12))
+        self.make("A2")
+        bins.set_done(True)
+        bins.refresh_from_db()
+        self.assertEqual(self.position(bins.next_todo), 3)
+
+    def test_meta_ordering_is_still_oldest_first(self):
+        # Protecting: "My order" is its own sort. Every other query keeps the
+        # order the to-dos were added, also after a move.
+        older = self.make("Older")
+        newer = self.make("Newer", todo_list=self.work)
+        newest = self.make("Newest")
+        Todo.objects.filter(pk=older.pk).update(position=9)
+        Todo.objects.filter(pk=newest.pk).update(position=1)
+        self.assertEqual(list(Todo.objects.all()), [older, newer, newest])
+
+    def test_number_existing_todos_per_list_by_age(self):
+        # Imported here, so only this test fails while the function is missing.
+        from django.apps import apps
+
+        from todos.data_migrations import number_existing_todos
+
+        a1 = self.make("A1")
+        b1 = self.make("B1", todo_list=self.work)
+        a2 = self.make("A2")
+        b2 = self.make("B2", todo_list=self.work)
+        a0 = self.make("A0")
+        # A0 is the oldest of its list.
+        Todo.objects.filter(pk=a0.pk).update(
+            created_at=timezone.now() - timedelta(days=1)
+        )
+        Todo.objects.update(position=None)
+        number_existing_todos(apps, None)
+        self.assertEqual(
+            [self.position(t) for t in [a0, a1, a2, b1, b2]], [1, 2, 3, 1, 2]
+        )
