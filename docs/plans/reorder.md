@@ -85,7 +85,10 @@ A person can put the to-dos of a list **in their own order**:
 ### 3. Every new to-do gets the next number in its list
 
 `Todo.save()` does it, not the add view. So **every** way that makes a to-do gets a number: the
-add form, the admin, and the next copy of a repeating to-do (19).
+add form and the admin. **Changed after review (orchestrator decision):** the next copy of a
+repeating to-do (19) does not go to the end: it **takes the original's number**, so it keeps the
+place in My order, and the completed original goes to the completed to-dos (they come last). See
+"What happened", review fixes.
 
 ```python
 def save(self, *args, **kwargs):
@@ -524,3 +527,71 @@ then the server was stopped and the database deleted.
   (disabled): ↑ of Water the plants, ↓ of Return the library books, and both on Pay rent (the only
   completed one). The rows are a little taller than before (two stacked buttons); nothing wraps.
 - **Date added** (`reorder-date-added-1280.png`): the order they were added, and no arrows.
+
+### Review fixes (after an adversarial review)
+
+A reviewer checked the branch. No blocker; seven fixes, in two more commits: the new tests first
+(red, `reorder-review-before.txt` in the builder's scratchpad: Integration 350 passed, 6 failed;
+Unit 157 passed, 2 failed), then the code. Each new test was shown failing against its bug.
+
+1. **Transactions are tested.** Before, removing `transaction.atomic()` from `move()` or `save()`
+   passed every test.
+   - `unit/test_database.py`: with `CaptureQueriesContext`, the reads and the two `UPDATE`s of a
+     move, and the `MAX(...)` and the `INSERT` of an add, sit between one `SAVEPOINT` and its
+     `RELEASE SAVEPOINT`. `connection.transaction_mode` is `"IMMEDIATE"` on the real connection.
+   - `integration/test_concurrency.py`: a temporary SQLite **file** with the project's settings, as
+     a second database name. Four threads add 10 to-dos each while four threads move one to-do 10
+     times: no error, and every position is different. (A plain `unittest.TestCase`: Django's test
+     cases refuse threads. The tables come from the models, not `migrate`: old data migrations
+     always use the default database.)
+   - **A real bug the test found:** `transaction.atomic()` with no `using` opens the transaction on
+     the **default** database, even when the to-do is on another one. Now `save()` uses the
+     database it saves to (`router.db_for_write`, like Django's own `save`), and `move()` uses
+     `siblings.db`. A second test watches every query on the to-dos table (`execute_wrapper`) and
+     fails if one runs outside a transaction of that database.
+   - Bugs shown: no `atomic` in `move` / in `save` → the SAVEPOINT tests fail; no `IMMEDIATE` →
+     both setting tests fail and the threads get `database is locked`; `atomic()` without `using`
+     in `save` or in `move` → the `execute_wrapper` test fails.
+2. **Bigger buttons.** `form.move`: side by side, `gap: 0.5rem`, `margin-left: 0.5rem` from Delete;
+   each button at least 24 × 24 px, and 2.75rem × 2.75rem on a touch screen (`pointer: coarse`).
+   On a narrow touch screen (≤ 30rem) a My-order row wraps: the title takes its own line, the
+   buttons go under it. (Checked by eye at 1280 here; the orchestrator checks 375.)
+3. **Focus and a message after a move.** `todo_move` writes `{"pk", "direction", "moved"}` to the
+   session (`MOVED_SESSION_KEY`); the next list page reads it **once** (`after_move`, checked
+   again: an int pk on this page, a known direction) and only in My order:
+   - the same button of the moved row gets `autofocus`; if it is now disabled (top or bottom),
+     the other one;
+   - `<p class="move-status" role="status">Moved Buy milk up (2 of 5)</p>` above the list (its
+     row on this page, and the number of rows), only when the to-do really moved.
+   - **Found by eye:** the add box also has `autofocus`, and a browser focuses the first one. So
+     after a move the add box gives it up (`page_context`), and a test checks that the page has
+     exactly one `autofocus` (the button), and the add box again on a normal page.
+   - Tests: the focus on the same button, on the other one at the top, a move that changes nothing
+     (focus, no message), the title escaped in the message, once only, nothing on another sort,
+     only one `autofocus`. Bugs shown: no session note; always the same button; the add box keeps
+     `autofocus`.
+4. **The source guard** has two more patterns: the model reached through an object
+   (`type(todo).objects`, `self.__class__._default_manager`, `todo._meta.model._base_manager`,
+   `x.model.objects`) and `_meta.default_manager` / `_meta.base_manager`. No hits in the code;
+   six new example lines in `test_the_guard_finds_an_unscoped_query`. The docstring says what a
+   regular expression cannot catch (a model in a variable, `getattr`, `apps.get_model`, a query
+   over several lines, raw SQL, a related manager of another person's object). The earlier
+   "into another person's list" bug (`type(todo)._default_manager.all()`) is now caught by the
+   guard too.
+5. **An empty position is last on the page** (`test_a_todo_with_no_position_is_last_in_my_order`).
+   Bug shown: `F("position").asc()` without `nulls_last` puts it first.
+6. **A repeating to-do's next copy takes the original's place** (orchestrator decision). In
+   `set_done`, `copy.position = fresh.position`. The completed original keeps its number too and
+   shows with the completed to-dos; the two share a number until the next move renumbers the list,
+   so **Undo puts the original back in its place** (tested). Bug shown: without the line, the copy
+   goes to the end (`3 != 1`).
+7. **`save()` on the same instance, and `update_fields`.** A to-do created, then given another list
+   and saved again (not read again) goes to the end of the new list. With
+   `save(update_fields=[...])` after a change of list, `save()` adds `todo_list` and `owner` (and
+   `position`), so the row really moves and its owner follows the list. Bugs shown: `save()` that
+   forgets the list after saving; `update_fields` without `todo_list` and `owner`.
+
+After: `make test` Integration 357 passed, Unit 159 passed; `make test-cuj` CUJ 8 passed;
+`make check` OK. By eye (`reorder-review/reorder-my-order-1280.png`): the message "Moved Return
+the library books up (3 of 5)" above the list, the focus ring on that row's ↑, the buttons side by
+side with space before them.

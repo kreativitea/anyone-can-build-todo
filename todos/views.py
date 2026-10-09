@@ -16,7 +16,7 @@ from django.views.decorators.http import require_http_methods, require_POST
 
 from .forms import SubtaskForm, TodoEditForm, TodoForm, TodoListForm
 from .models import TAG_MAX_LENGTH, Todo, TodoList, clean_tag_name
-from .ordering import DIRECTIONS, move, move_limits
+from .ordering import DIRECTIONS, DOWN, UP, move, move_limits
 
 # Django refuses a form with more than 1,000 fields, and then nothing is
 # deleted. So the delete-completed button offers at most this many, oldest
@@ -327,6 +327,43 @@ def shown_todos(request, current_list, params):
     return tag_todos(todos, params)
 
 
+# The session key of the last move: {"pk", "direction", "moved"}.
+MOVED_SESSION_KEY = "todos_last_move"
+
+
+def after_move(last_move, todos, no_up, no_down):
+    """The button to focus, and the message, right after a move.
+
+    `last_move` comes from the session (todo_move wrote it), so it is checked
+    again: a dict with an int `pk` that is on this page and a known direction.
+    Returns ({"pk", "direction"} or None, the message or "").
+    The focus goes to the same button; if it is now disabled (the row reached
+    the top or the bottom), to the other one. The message, like "Moved Buy
+    milk up (2 of 5)", only when the to-do really moved; the numbers are its
+    row on this page and the number of rows.
+    """
+    if not isinstance(last_move, dict):
+        return None, ""
+    pk, direction = last_move.get("pk"), last_move.get("direction")
+    if not isinstance(pk, int) or direction not in DIRECTIONS:
+        return None, ""
+    rows = list(todos)  # the page's rows, already read by move_limits
+    index = next((i for i, todo in enumerate(rows) if todo.pk == pk), None)
+    if index is None:
+        return None, ""
+    disabled = {UP: no_up, DOWN: no_down}
+    other = DOWN if direction == UP else UP
+    focus = None
+    for choice in (direction, other):
+        if pk not in disabled[choice]:
+            focus = {"pk": pk, "direction": choice}
+            break
+    status = ""
+    if last_move.get("moved") is True:
+        status = f"Moved {rows[index].title} {direction} ({index + 1} of {len(rows)})"
+    return focus, status
+
+
 def page_context(request, form, current_list):
     """What the list page needs. Both views use this, so a new key goes here once.
 
@@ -346,6 +383,16 @@ def page_context(request, form, current_list):
     can_move = params.get("sort") == MANUAL_SORT
     # Reads the rows once; the template uses the same rows (no extra query).
     no_up, no_down = move_limits(todos) if can_move else (set(), set())
+    # Read once, on any list page: an old note never comes back later.
+    last_move = request.session.pop(MOVED_SESSION_KEY, None)
+    move_focus, move_status = (
+        after_move(last_move, todos, no_up, no_down) if can_move else (None, "")
+    )
+    if move_focus is not None:
+        # A browser focuses the FIRST element with autofocus: the add box
+        # gives it up, so the focus stays on the row that moved. (The form's
+        # widgets are copies: this changes only this page.)
+        form.fields["title"].widget.attrs.pop("autofocus", None)
     if selected is None:
         params.pop("selected", None)  # then the page is exactly the page without it
     without_q = {k: v for k, v in params.items() if k != "q"}
@@ -384,6 +431,8 @@ def page_context(request, form, current_list):
         "can_move": can_move,
         "no_up_ids": no_up,
         "no_down_ids": no_down,
+        "move_focus": move_focus,
+        "move_status": move_status,
     }
 
 
@@ -457,7 +506,14 @@ def todo_move(request, pk):
         return HttpResponseBadRequest("direction must be up or down")
     current_list = get_list(request, todo.todo_list_id)
     params = list_params(request.GET)
-    move(todo, shown_todos(request, current_list, params), direction)
+    moved = move(todo, shown_todos(request, current_list, params), direction)
+    # The next list page puts the focus back on this button and says what
+    # happened (after_move). Kept in the session, read once.
+    request.session[MOVED_SESSION_KEY] = {
+        "pk": todo.pk,
+        "direction": direction,
+        "moved": moved,
+    }
     # Back to the moved row: the browser scrolls to it. The fragment is
     # built from the integer pk, never from the request.
     return redirect(list_url(request, current_list.pk) + f"#todo-{todo.pk}")

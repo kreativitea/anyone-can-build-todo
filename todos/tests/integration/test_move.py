@@ -4,6 +4,7 @@ from todos.models import Todo, TodoList
 from todos.tests.integration.helpers import (
     ClassCounter,
     LoggedInTestCase,
+    autofocus_tags,
     count_elements,
     first_list,
     make_user,
@@ -263,6 +264,18 @@ class MoveTests(LoggedInTestCase):
                 self.assertInHTML(form, row_html(page, todo), count=1)
         self.assertContains(page, move_status("Moved C up (2 of 3)"), html=True)
         self.assertEqual(count_elements(page, "p", "move-status"), 1)
+
+    def test_after_a_move_only_the_button_has_autofocus(self):
+        # The add box has autofocus on every other page. A browser focuses
+        # the FIRST element with autofocus, so after a move the box must not
+        # have it, or the focus would jump back to the top.
+        self.make("A")
+        b = self.make("B")
+        page = self.moved_page(b, "up")
+        self.assertEqual(autofocus_tags(page), [("button", "Move B down")])
+        # Without a move, the add box has it, as before.
+        page = self.client.get(self.list_url(query=MY_ORDER))
+        self.assertEqual(autofocus_tags(page), [("input", "New to-do")])
 
     def test_at_the_top_the_other_button_has_the_focus(self):
         # Moved to the first row: its ↑ is disabled, so ↓ gets the focus.

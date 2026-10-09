@@ -589,6 +589,25 @@ def move_form(todo, query="", up=True, down=True, focus=None):
     )
 
 
+class AutofocusTags(HTMLParser):
+    """Every element with `autofocus`: (its tag, its aria-label), in order."""
+
+    def __init__(self, html):
+        super().__init__()
+        self.found = []
+        self.feed(html)
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if "autofocus" in attrs:
+            self.found.append((tag, attrs.get("aria-label")))
+
+
+def autofocus_tags(response):
+    """Every element on the page with `autofocus`. A browser focuses the first."""
+    return AutofocusTags(response.content.decode()).found
+
+
 def move_status(text):
     """The message after a move, like "Moved Buy milk up (2 of 5)", exactly."""
     return f'<p class="move-status" role="status">{escape(text)}</p>'

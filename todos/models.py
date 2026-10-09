@@ -3,7 +3,7 @@ import unicodedata
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import MaxLengthValidator
-from django.db import models, transaction
+from django.db import models, router, transaction
 from django.db.models import Count, F, Max, Q
 from django.utils import timezone
 
@@ -305,18 +305,28 @@ class Todo(models.Model):
         self.owner_id = self.todo_list.owner_id
         saved_owner_id = getattr(self, "_saved_owner_id", self.owner_id)
         loaded_list_id = getattr(self, "_loaded_list_id", self.todo_list_id)
-        if self.pk is not None and self.todo_list_id != loaded_list_id:
+        moved = self.pk is not None and self.todo_list_id != loaded_list_id
+        if moved:
             self.position = None  # moved to another list: go to its end
-        # One transaction: the largest number is read and the row written
-        # together. IMMEDIATE (settings) lets one such writer in at a time.
-        with transaction.atomic():
+        # save(update_fields=[...]) writes only those fields: add the ones
+        # this method changes, or they would change in Python only.
+        update_fields = kwargs.get("update_fields")
+        if update_fields is not None and moved:
+            update_fields = {*update_fields, "todo_list", "owner"}
+        # One transaction, on the database this row is saved to: the largest
+        # number is read and the row written together. IMMEDIATE (settings)
+        # lets one such writer in at a time.
+        using = kwargs.get("using") or router.db_for_write(type(self), instance=self)
+        with transaction.atomic(using=using):
             if self.position is None:
-                # Every way that makes a to-do comes here: the add form, the
-                # admin, the next copy of a repeating to-do.
+                # The add form, the admin, a move to another list. (The next
+                # copy of a repeating to-do takes the original's number:
+                # set_done.)
                 self.position = self.todo_list.todos.next_position()
-                update_fields = kwargs.get("update_fields")
                 if update_fields is not None:
-                    kwargs["update_fields"] = {*update_fields, "position"}
+                    update_fields = {*update_fields, "position"}
+            if update_fields is not None:
+                kwargs["update_fields"] = update_fields
             super().save(*args, **kwargs)
             if saved_owner_id != self.owner_id:
                 # Moved into another person's list (only the admin can do
@@ -434,6 +444,12 @@ class Todo(models.Model):
                         copy = fresh.next_copy()
                     except OverflowError:
                         return  # no date after 31 Dec 9999: Done, with no copy
+                    # The copy keeps the original's place in My order
+                    # (orchestrator decision); the completed original goes to
+                    # the completed to-dos, which come last. The two share a
+                    # number until a move renumbers the list, so Undo puts
+                    # the original back in its place.
+                    copy.position = fresh.position
                     copy.save()
                     # Same transaction: the copy, its steps and tags, or none.
                     fresh.copy_subtasks_to(copy)

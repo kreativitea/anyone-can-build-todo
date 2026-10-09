@@ -49,17 +49,19 @@ def move(todo, shown, direction):
     a completed one. The two to-dos swap their numbers. At the first or last
     row nothing changes. If `todo` is not shown (an old page), the neighbour
     comes from the whole list.
+    Returns True when two to-dos swapped, False when nothing changed.
     """
     if direction not in DIRECTIONS:
         raise ValueError(f"direction must be {UP!r} or {DOWN!r}")
     siblings = todo.todo_list.todos.all()  # this list only, never another one
-    with transaction.atomic():
+    # One transaction on the list's own database: every read and both writes.
+    with transaction.atomic(using=siblings.db):
         if needs_renumber(siblings):
             renumber(siblings)
         # Read fresh, inside the transaction: another tab may have moved it.
         fresh = siblings.filter(pk=todo.pk).first()
         if fresh is None:
-            return  # deleted a moment ago
+            return False  # deleted a moment ago
         shown_ids = set(shown.values_list("pk", flat=True))
         rows = siblings.filter(done=fresh.done).in_my_order()
         ids = list(rows.values_list("pk", flat=True))
@@ -68,10 +70,11 @@ def move(todo, shown, direction):
         index = ids.index(fresh.pk)
         other_index = index - 1 if direction == UP else index + 1
         if not 0 <= other_index < len(ids):
-            return  # the first row cannot go up, the last cannot go down
+            return False  # the first row cannot go up, the last cannot go down
         other = siblings.get(pk=ids[other_index])
         siblings.filter(pk=fresh.pk).update(position=other.position)
         siblings.filter(pk=other.pk).update(position=fresh.position)
+        return True
 
 
 def move_limits(todos):

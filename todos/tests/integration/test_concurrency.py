@@ -14,6 +14,7 @@ import unittest
 from pathlib import Path
 
 from django.apps import apps
+from django.contrib.auth import get_user_model
 from django.db import connections
 
 from todos.models import Todo, TodoList
@@ -52,15 +53,40 @@ class ConcurrencyTests(unittest.TestCase):
         del connections.settings[ALIAS]
         shutil.rmtree(cls.folder)
 
-    def test_adds_and_moves_at_the_same_time(self):
-        from django.contrib.auth import get_user_model
-
+    def make_list(self, username):
+        """A new user on the file database, with one list."""
         user = (
             get_user_model()
             .objects.db_manager(ALIAS)
-            .create_user("ana", password=TEST_PASSWORD)
+            .create_user(username, password=TEST_PASSWORD)
         )
-        todo_list = TodoList.objects.using(ALIAS).create(owner=user, name="Mine")
+        return TodoList.objects.using(ALIAS).create(owner=user, name="Mine")
+
+    def test_add_and_move_use_a_transaction_on_their_own_database(self):
+        # Without `using`, atomic() opens its transaction on the DEFAULT
+        # database, and the to-do's own database has none. Every query on
+        # the to-dos table must run inside a transaction of ITS database.
+        todo_list = self.make_list("ben")
+        connection = connections[ALIAS]
+        outside = []
+
+        def watch(execute, sql, params, many, context):
+            if '"todos_todo"' in sql and not connection.in_atomic_block:
+                outside.append(sql)
+            return execute(sql, params, many, context)
+
+        first = Todo.objects.using(ALIAS).create(todo_list=todo_list, title="A")
+        second = Todo.objects.using(ALIAS).create(todo_list=todo_list, title="B")
+        shown = Todo.objects.using(ALIAS).filter(todo_list=todo_list)
+        with connection.execute_wrapper(watch):
+            Todo.objects.using(ALIAS).create(todo_list=todo_list, title="C")
+            move(second, shown, "up")
+        self.assertEqual(outside, [])
+        order = shown.in_my_order().values_list("pk", flat=True)
+        self.assertEqual(list(order)[:2], [second.pk, first.pk])
+
+    def test_adds_and_moves_at_the_same_time(self):
+        todo_list = self.make_list("ana")
         todos = [
             Todo.objects.using(ALIAS).create(todo_list=todo_list, title=f"T{i}")
             for i in range(6)
