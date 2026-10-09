@@ -145,3 +145,6 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# Our test runner: like Django's, plus a summary for each level of tests.
+TEST_RUNNER = "config.test_runner.LevelTestRunner"

@@ -1,7 +1,7 @@
 from django.test import TestCase
 from django.urls import reverse
 
-from .models import Todo
+from todos.models import Todo
 
 
 class TodoTests(TestCase):
@@ -31,3 +31,25 @@ class TodoTests(TestCase):
         todo = Todo.objects.create(title="Call home")
         self.client.post(reverse("todo_delete", args=[todo.pk]))
         self.assertEqual(Todo.objects.count(), 0)
+
+    def test_get_cannot_change_data(self):
+        todo = Todo.objects.create(title="Call home")
+        for url in [
+            reverse("todo_add") + "?title=Buy+milk",
+            reverse("todo_toggle", args=[todo.pk]),
+            reverse("todo_delete", args=[todo.pk]),
+        ]:
+            with self.subTest(url=url):
+                response = self.client.get(url)
+                self.assertEqual(response.status_code, 405)
+        todo.refresh_from_db()
+        self.assertFalse(todo.done)
+        self.assertEqual(Todo.objects.count(), 1)
+
+    def test_toggle_missing_todo_is_404(self):
+        response = self.client.post(reverse("todo_toggle", args=[999]))
+        self.assertEqual(response.status_code, 404)
+
+    def test_delete_missing_todo_is_404(self):
+        response = self.client.post(reverse("todo_delete", args=[999]))
+        self.assertEqual(response.status_code, 404)

@@ -20,7 +20,10 @@ in a SQLite database, the file `db.sqlite3`, which is not in git.
 | `todos/urls.py` | The four addresses: the list, add, toggle, delete. |
 | `todos/views.py` | One function per address. Add, toggle and delete accept `POST` only, then send the browser back to the list. |
 | `todos/templates/todos/todo_list.html` | The one page: the add form and the list. |
-| `todos/tests.py` | The tests. |
+| `todos/tests/unit/` | Unit tests: one piece alone, like the model, with no request. |
+| `todos/tests/integration/` | Integration tests: requests through Django's test client, from the URL to the database. |
+| `todos/tests/cuj/` | CUJ tests (critical user journeys): a whole journey in a real browser, with Playwright. |
+| `config/test_runner.py` | Runs the tests like Django does, then prints a summary for each level. |
 | `todos/migrations/` | Made by Django from `models.py`. Never edit these by hand. |
 | `pyproject.toml`, `uv.lock` | The packages this project uses, and their exact versions. |
 | `.pre-commit-config.yaml` | The checks that run on every `git commit`. |
@@ -31,11 +34,13 @@ in a SQLite database, the file `db.sqlite3`, which is not in git.
 This project uses **uv** to install Python and the packages. Run every Python command through
 `uv run`, so it uses this project's packages:
 
-- `make setup` — install everything, create the database, turn on the commit checks
+- `make setup` — install everything, create the database, download the test browser, turn on the commit checks
 - `make run` — start the server at <http://127.0.0.1:8000>
-- `make test` — run the tests
+- `make test` — run the unit and integration tests, in parallel (fast)
+- `make test-cuj` — run the CUJ tests in a real browser (slow)
 - `make lint` / `make format` — Ruff: find mistakes, and rewrite code in the standard style
-- `make check` — every commit check on every file, then the tests
+- `make check` — every commit check on every file, a check that no migration is missing or
+  clashing, then every test
 
 Add a package with `uv add <name>`, never with `pip install`. After changing `models.py`, run
 `uv run python manage.py makemigrations` and then `uv run python manage.py migrate`.
@@ -48,5 +53,7 @@ Add a package with `uv add <name>`, never with `pip install`. After changing `mo
 - **Use what Django already has** — forms, the admin, `get_object_or_404`, the test client — before
   writing your own.
 - **Change data only with `POST`.** A `GET` request only reads.
+- **Put a test in the lowest level that can catch the bug.** Its folder sets the level: `unit`,
+  `integration` or `cuj`. Add a CUJ test only for a new journey a person takes.
 - **Add or change a test with every change in behavior**, and show the person the test failing
   before the fix and passing after.
