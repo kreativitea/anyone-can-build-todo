@@ -23,6 +23,7 @@ in a SQLite database, the file `db.sqlite3`, which is not in git.
 | `todos/templates/todos/todo_list.html` | The one page: the add form (drawn by Django from `TodoForm`), the filter links, the list, and under it how many to-dos are left and the "Delete N completed to-dos" button. |
 | `todos/tests/unit/` | Unit tests: one piece alone, like the model, with no request. |
 | `todos/tests/integration/` | Integration tests: requests through Django's test client, from the URL to the database. |
+| `todos/tests/integration/helpers.py` | Helpers the integration tests share: `page_parts` (the titles shown, the `POST` form actions, the chosen filter link), `page_without_csrf`, and `list_footer` (the whole footer, exactly). |
 | `todos/tests/cuj/` | CUJ tests (critical user journeys): a whole journey in a real browser, with Playwright. |
 | `config/test_runner.py` | Runs the tests like Django does, then prints a summary for each level. |
 | `todos/migrations/` | Made by Django from `models.py`. Never edit these by hand. |

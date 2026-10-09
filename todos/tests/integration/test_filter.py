@@ -1,9 +1,8 @@
-from html.parser import HTMLParser
-
 from django.test import TestCase
 from django.urls import reverse
 
 from todos.models import Todo
+from todos.tests.integration.helpers import list_footer, page_parts, page_without_csrf
 
 # The empty message for each filter, as the whole <li> element.
 EMPTY_ALL = "<li>Nothing to do yet. Add something above.</li>"
@@ -29,58 +28,23 @@ def nav(chosen):
     return NAV.format(**marks)
 
 
-class PageParts(HTMLParser):
-    """Reads the parts of the page the tests compare exactly.
-
-    `post_actions` is the `action` of every form with method="post".
-    `titles` is the text of every <span class="title">: the to-dos shown, in order.
-    `current_links` is the text of every link with aria-current="page". A test
-    that compares it to one name proves that no OTHER link is marked too.
-    """
-
-    def __init__(self, html):
-        super().__init__()
-        self.post_actions = []
-        self.titles = []
-        self.current_links = []
-        self._collect = None  # the list that the next text goes into
-        self.feed(html)
-
-    def handle_starttag(self, tag, attrs):
-        attrs = dict(attrs)
-        if tag == "form" and (attrs.get("method") or "").lower() == "post":
-            self.post_actions.append(attrs.get("action", ""))
-        if tag == "span" and attrs.get("class") == "title":
-            self.titles.append("")
-            self._collect = self.titles
-        if tag == "a" and attrs.get("aria-current") == "page":
-            self.current_links.append("")
-            self._collect = self.current_links
-
-    def handle_endtag(self, tag):
-        if tag in ("span", "a"):
-            self._collect = None
-
-    def handle_data(self, data):
-        if self._collect is not None:
-            self._collect[-1] += data.strip()
-
-
-def page_parts(response):
-    return PageParts(response.content.decode())
-
-
 class FilterTests(TestCase):
     def make_one_of_each(self):
         self.active = Todo.objects.create(title="Buy milk")
         self.completed = Todo.objects.create(title="Call home", done=True)
 
     def forms_for(self, todo, query):
-        """The exact actions of the add form and one to-do's two forms."""
+        """The exact actions of every POST form on the page, in order.
+
+        The add form, the shown to-do's toggle and delete forms, and the
+        delete-completed form in the footer (there is always a completed to-do
+        in these tests, so it is always there).
+        """
         return [
             reverse("todo_add") + query,
             reverse("todo_toggle", args=[todo.pk]) + query,
             reverse("todo_delete", args=[todo.pk]) + query,
+            reverse("todo_delete_completed") + query,
         ]
 
     # Filter: new behaviour.
@@ -192,6 +156,38 @@ class FilterTests(TestCase):
                 response = self.client.get(url)
                 for message in EMPTY_MESSAGES:
                     self.assertNotContains(response, message, html=True)
+
+    # Filter with count (12) and delete completed (11): the footer is about the
+    # whole table, not only what the filter shows.
+
+    def test_count_shows_on_completed_view_with_nothing_completed(self):
+        Todo.objects.create(title="Buy milk")
+        response = self.client.get("/?show=completed")
+        self.assertEqual(page_parts(response).titles, [])
+        self.assertContains(response, EMPTY_COMPLETED, count=1, html=True)
+        self.assertInHTML(
+            list_footer("1 item left"), page_without_csrf(response), count=1
+        )
+
+    def test_count_on_active_view_with_everything_completed(self):
+        todo = Todo.objects.create(title="Call home", done=True)
+        response = self.client.get("/?show=active")
+        self.assertEqual(page_parts(response).titles, [])
+        self.assertContains(response, EMPTY_ACTIVE, count=1, html=True)
+        self.assertInHTML(
+            list_footer("0 items left", [todo.pk], "?show=active"),
+            page_without_csrf(response),
+            count=1,
+        )
+
+    def test_delete_completed_keeps_the_filter(self):
+        todo = Todo.objects.create(title="Call home", done=True)
+        response = self.client.post(
+            reverse("todo_delete_completed") + "?show=completed", {"ids": [todo.pk]}
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response["Location"], "/?show=completed")
+        self.assertFalse(Todo.objects.exists())
 
     # Filter: protect what already works.
 

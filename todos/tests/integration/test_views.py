@@ -7,38 +7,11 @@ from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 
 from todos.models import Todo
-
-CSRF_INPUT = re.compile(
-    r'<input type="hidden" name="csrfmiddlewaretoken" value="[^"]*">'
+from todos.tests.integration.helpers import (
+    delete_completed_form,
+    list_footer,
+    page_without_csrf,
 )
-
-
-def page_without_csrf(response):
-    """The page's HTML without the CSRF token inputs.
-
-    The token is different every time the page is drawn, so a test cannot
-    write it down. Taking it out lets a test compare whole forms exactly.
-    """
-    return CSRF_INPUT.sub("", response.content.decode())
-
-
-def delete_completed_form(ids):
-    """The delete-completed form, exactly as the page must show it."""
-    hidden = "".join(f'<input type="hidden" name="ids" value="{pk}">' for pk in ids)
-    count = len(ids)
-    return (
-        '<form class="delete-completed" method="post" action="/delete-completed/">'
-        f"{hidden}"
-        f'<button type="submit">Delete {count} completed to-do'
-        f"{'' if count == 1 else 's'}</button>"
-        "</form>"
-    )
-
-
-def list_footer(count_text, completed_ids=()):
-    """The whole footer under the list, exactly as the page must show it."""
-    form = delete_completed_form(completed_ids) if completed_ids else ""
-    return f'<div class="list-footer"><p class="count">{count_text}</p>{form}</div>'
 
 
 class TodoTests(TestCase):

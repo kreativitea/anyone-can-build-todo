@@ -14,6 +14,7 @@ from .models import Todo
 # first; the next click deletes the rest.
 MAX_DELETE_AT_ONCE = 500
 
+
 class Filter(NamedTuple):
     """One filter: everything about it is in this one row."""
 
@@ -26,13 +27,8 @@ class Filter(NamedTuple):
 # The one table of filters. The first row is the default: it needs no ?show=.
 FILTERS = [
     Filter("all", "All", "Nothing to do yet. Add something above.", lambda t: t),
-    Filter("active", "Active", "Nothing left to do.", lambda t: t.filter(done=False)),
-    Filter(
-        "completed",
-        "Completed",
-        "Nothing completed yet.",
-        lambda t: t.filter(done=True),
-    ),
+    Filter("active", "Active", "Nothing left to do.", lambda t: t.remaining()),
+    Filter("completed", "Completed", "Nothing completed yet.", lambda t: t.completed()),
 ]
 DEFAULT_FILTER = FILTERS[0]
 FILTER_BY_VALUE = {f.value: f for f in FILTERS}
@@ -150,4 +146,4 @@ def todo_delete_completed(request):
         if value.isascii() and value.isdigit() and len(value) <= MAX_ID_DIGITS
     ]
     Todo.objects.completed().filter(pk__in=ids).delete()
-    return redirect("todo_list")
+    return back_to_list(request)

@@ -1,6 +1,6 @@
 # Plan: filter the list (All, Active, Completed)
 
-Status: **approved, in progress.** Built and tested on top of feature 5; the part "After 12 and 11 are on `main`" is still to do.
+Status: **done.** Built, reviewed, and rebased on `main` with 12 (count) and 11 (delete completed).
 
 This is feature 8, the last one in wave 1 of [the rollout plan](feature-rollout.md). An adversarial
 review (a reviewer whose job is to find what is wrong) checked the first version. Every finding is
@@ -512,3 +512,46 @@ After these fixes: CUJ 1, Integration 37, Unit 9, all passing; `make check` pass
 to `TodoQuerySet`) instead of their own `filter(done=...)`.
 Also, `test_every_post_form_keeps_the_filter` and `test_add_error_keeps_the_filter` compare the
 exact list of form actions, so 11's footer form must be added to that list.
+
+### After the rebase on 12 and 11
+
+The branch was rebased on `main` with 12 and 11 in it (`git rebase --onto origin/main`, only this
+feature's three commits). The clashes were in `views.py`, the template and `AGENTS.md`. Each one was
+fixed by keeping both sides: `page_context` keeps 12's and 11's keys (`has_todos`,
+`remaining_count`, `completed_ids`) and this feature's keys (`empty_message`, `list_query`,
+`filter_links`). The template keeps 11's footer and 5's due date inside the title span.
+
+Then the work in "After 12 and 11 are on `main`":
+
+1. **`page_context`.** The count is `Todo.objects.remaining().count()`, `has_todos` is
+   `Todo.objects.exists()`, and `completed_ids` comes from `Todo.objects.completed()`. None of them
+   uses the filtered `todos`.
+2. **`FILTERS`** uses the queryset's methods: Active is `t.remaining()`, Completed is
+   `t.completed()`. 11 added `completed()`, so nothing was added to the model.
+3. **Delete completed (11).** Its form's `action` ends with `{{ list_query }}`, and its view ends
+   with `back_to_list(request)`.
+4. **Exact form lists.** `forms_for` in `test_filter.py` now also lists `/delete-completed/` with the
+   query. Before the code change, `test_every_post_form_keeps_the_filter` and
+   `test_add_error_keeps_the_filter` failed: the footer form had no query.
+5. **Shared helpers.** `PageParts` and `page_parts` moved to `todos/tests/integration/helpers.py`.
+   11's `page_without_csrf`, `delete_completed_form` and `list_footer` moved there too, so both test
+   files use one copy. `delete_completed_form` and `list_footer` got a `query` argument (default
+   `""`), so a test can build the footer for a filtered page. `PageParts` now takes only the text
+   before any tag inside the title span, because 5's due date is a `<small>` inside it.
+6. **The three tests**, each seen failing against its bug (put in for a moment, then taken out):
+
+   | Test | Bug | Result |
+   |---|---|---|
+   | `test_count_shows_on_completed_view_with_nothing_completed` | `has_todos` from the filtered `todos.exists()` | failed: no footer (the Active test failed too) |
+   | the same test | `remaining_count` from the filtered `todos` | failed: `0 items left` instead of `1 item left` |
+   | `test_count_on_active_view_with_everything_completed` | before the code: the footer form had no query | failed |
+   | the same test | `completed_ids` from the filtered `todos` | failed: no delete-completed form (the two exact form-list tests failed too) |
+   | `test_delete_completed_keeps_the_filter` | the view still ends with `redirect("todo_list")` | failed: `'/' != '/?show=completed'` |
+
+   **One difference from the plan:** the plan's bug for the Active test was "count from the filtered
+   `todos`". That bug cannot fail this test: on Active with everything completed, the right count
+   is 0, and the filtered count is 0 too. The Completed test catches that bug. The Active test was
+   shown failing against the bug it can catch instead: `completed_ids` from the filtered list.
+
+After the rebase: `make test`, `make test-cuj` and `make check` all pass (CUJ 1, Integration 64,
+Unit 12).
