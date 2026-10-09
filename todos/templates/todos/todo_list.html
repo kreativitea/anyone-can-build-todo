@@ -37,7 +37,7 @@
     <button type="submit">Add</button>
   </form>
 
-  <nav class="filters" aria-label="Show">
+  <nav class="filters" aria-label="Filter to-dos">
     {% for link in filter_links %}
       <a href="{{ link.url }}"{% if link.current %} aria-current="page"{% endif %}>{{ link.label }}</a>
     {% endfor %}
@@ -57,7 +57,7 @@
         </form>
       </li>
     {% empty %}
-      <li>{% if show == "active" %}Nothing left to do.{% elif show == "completed" %}Nothing completed yet.{% else %}Nothing to do yet. Add something above.{% endif %}</li>
+      <li>{{ empty_message }}</li>
     {% endfor %}
   </ul>
   {% if has_todos %}

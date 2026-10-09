@@ -185,7 +185,8 @@ def filter_links(params):
     return [
         {
             "label": label,
-            "url": reverse("todo_list") + list_query(list_params({**params, "show": value})),
+            "url": reverse("todo_list")
+            + list_query(list_params({**params, "show": value})),
             "current": value == chosen,
         }
         for value, label in FILTERS
@@ -438,11 +439,12 @@ why.
 2. **The part for 12 and 11 is not done yet.** The three tests in "After the rebase on 12 and 11",
    and the changes in "After 12 and 11 are on `main`", wait until this branch is rebased on `main`
    with 12 and 11 in it.
-3. **"`aria-current` is on the page once".** The page's CSS also has the words
-   `aria-current="page"`, in `nav.filters a[aria-current="page"]`. So counting the text would find
-   two. Instead, the test helper (an `HTMLParser`) also lists the text of every link that has
-   `aria-current="page"`, and the test checks that this list is exactly `["Completed"]`. The same
-   check is used in `test_unknown_filter_marks_all` and `test_add_error_keeps_the_filter`.
+3. **"`aria-current` is on the page once".** `assertContains(..., html=True)` finds the chosen
+   link, but it cannot say that **no other** link is marked too. (Counting the text
+   `aria-current="page"` would not work either: the CSS selector has the same words.) So the test
+   helper (an `HTMLParser`) lists the text of every link that has `aria-current="page"`, and the
+   test checks that this list is exactly `["Completed"]`. That proves no other link is marked. The
+   same check is used in `test_unknown_filter_marks_all` and `test_add_error_keeps_the_filter`.
 4. **`test_toggle_on_active_leaves_the_list`** checks the end address with the test client's
    `redirect_chain`: it must be `[("/?show=active", 302)]`.
 5. **The open-redirect test was seen failing twice.** Before the code, the real bug
@@ -460,3 +462,53 @@ why.
 Results: before the code, the unit file failed with one `ImportError`, all 13 new integration tests
 failed for the reasons in the plan, and the 4 protecting tests passed. After the code, `make test`,
 `make test-cuj` and `make check` all pass (CUJ 1, Integration 35, Unit 7).
+
+### After the code review
+
+An adversarial code reviewer found no blockers. These fixes were made as a new commit:
+
+1. **One table of filters.** `FILTERS` is now a list of `Filter` rows. Each row has the value in
+   the address, the word on the link, the empty message, and `apply`: the function that makes the
+   list smaller. `list_params` checks `show` against this table. `filter_todos` and `filter_links`
+   look the row up with `chosen_filter(params)`. `page_context` passes `empty_message` instead of
+   `show`, so the template has no filter words in it: it draws `<li>{{ empty_message }}</li>`. A new
+   filter is now one new row.
+2. **The nav's name** is `aria-label="Filter to-dos"`, not `"Show"`. "Show" alone did not say what
+   the links do.
+3. **Exact checks in the tests.**
+   - The helper also lists the text of every `<span class="title">`: the to-dos shown, in order.
+     The tests compare that list exactly (for example `["Buy milk"]`), instead of searching for a
+     title anywhere on the page.
+   - The empty messages are checked as whole elements, like `<li>Nothing left to do.</li>`.
+   - The filter links are checked as the whole `<nav>` element, with its `aria-label`.
+   - The `POST` form actions are compared exactly to the list of addresses (add, toggle, delete),
+     not with "ends with `?show=...`".
+4. **New tests.**
+   - `test_no_empty_message_when_the_list_has_items`: no empty message on any filter when the list
+     has items.
+   - `test_empty_list_on_all_shows_the_old_message`: the exact old message on an empty `/`.
+   - `test_filter_links_with_no_params` and `test_filter_links_keep_other_params` (unit). The second
+     one replaces `list_params` with a stub that also keeps a pretend search parameter `q`, and
+     checks every link keeps `q`.
+5. **Each new or tighter test was seen failing against its own bug,** put in for a moment and then
+   taken out:
+   - Empty message outside `{% empty %}`: `test_no_empty_message_when_the_list_has_items` failed.
+   - `filter_links` built from `{"show": value}` only: `test_filter_links_keep_other_params` failed.
+   - Delete form posting to the add address, with the right query (the old "ends with" check would
+     pass): `test_every_post_form_keeps_the_filter` and `test_add_error_keeps_the_filter` failed.
+   - `filter_todos` returning every to-do: the title tests failed with, for example,
+     `['Buy milk', 'Call home'] != ['Buy milk']`.
+   - The All link always marked too: `test_chosen_filter_is_marked`, `test_add_error_keeps_the_filter`
+     and the unit test failed (`['All', 'Active'] != ['Active']`).
+   - `aria-label` taken off the nav: the three nav tests failed.
+6. **No `CONVENTIONS` file exists** in the repository yet. The exact checks follow what the reviewer
+   asked for.
+
+After these fixes: CUJ 1, Integration 37, Unit 9, all passing; `make check` passes.
+
+**Added to the work after the rebase on 12 and 11:** `main` now has `TodoQuerySet` with
+`remaining()` (from 12). The `apply` functions in `FILTERS` must use the queryset's methods
+(`lambda t: t.remaining()`, and `lambda t: t.completed()` if 11 adds it; if not, add `completed()`
+to `TodoQuerySet`) instead of their own `filter(done=...)`.
+Also, `test_every_post_form_keeps_the_filter` and `test_add_error_keeps_the_filter` compare the
+exact list of form actions, so 11's footer form must be added to that list.
