@@ -10,11 +10,22 @@ from todos.tests.integration.helpers import page_parts
 # can change how its letters are stored.
 GYUUNYUU = "ギュウニュウ"
 
+# "می‌خواهم" (Persian), with a zero-width non-joiner (U+200C) inside.
+PERSIAN = "می‌خواهم"
+# 👩‍💻: a woman, a zero-width joiner (U+200D), and a laptop.
+CODER = "\U0001f469‍\U0001f4bb"
+
+# Note: on SQLite, `icontains` and `contains` cannot be told apart by a test
+# (both ignore big and small letters for A to Z), so no test tries.
+
+# The box's maxlength: the browser counts UTF-16 units, so it is 2 × 200.
+BOX = '<input type="search" id="search-q" name="q" value="{}" maxlength="400">'
+
 # The whole search form on `/`: no hidden input and no "Clear search" link.
 PLAIN_SEARCH_FORM = (
     '<form class="search" role="search" method="get" action="/">'
     '<label for="search-q">Search to-dos</label>'
-    '<input type="search" id="search-q" name="q" value="" maxlength="200">'
+    f"{BOX.format('')}"
     '<button type="submit">Search</button>'
     "</form>"
 )
@@ -27,9 +38,7 @@ def title(text):
 
 def search_box(value):
     """The search box, as the whole element, with `value` already escaped."""
-    return (
-        f'<input type="search" id="search-q" name="q" value="{value}" maxlength="200">'
-    )
+    return BOX.format(value)
 
 
 class SearchTests(TestCase):
@@ -99,6 +108,38 @@ class SearchTests(TestCase):
                 response = self.search(q)
                 others = [text for text in titles if text != found]
                 self.assert_shown(response, [found], others)
+
+    def test_search_keeps_the_joiners(self):
+        Todo.objects.all().delete()
+        titles = [PERSIAN, f"{CODER} review", "Call home"]
+        for text in titles:
+            Todo.objects.create(title=text)
+        for q, found in [(PERSIAN, PERSIAN), (CODER, f"{CODER} review")]:
+            with self.subTest(q=q):
+                response = self.search(q)
+                others = [text for text in titles if text != found]
+                self.assert_shown(response, [found], others)
+
+    def test_no_match_message_shows_the_cleaned_word(self):
+        # Spaces and a zero-width space around the word are cleaned away.
+        response = self.search(" banana​ ")
+        self.assertContains(
+            response, '<li>No to-dos match "banana".</li>', count=1, html=True
+        )
+
+    def test_page_title_names_the_search(self):
+        cases = [
+            ({}, "<title>To-do list</title>"),
+            ({"q": "milk"}, "<title>Search: milk – To-do list</title>"),
+            (
+                {"q": "<b>hi</b>"},
+                "<title>Search: &lt;b&gt;hi&lt;/b&gt; – To-do list</title>",
+            ),
+        ]
+        for params, page_title in cases:
+            with self.subTest(params=params):
+                response = self.client.get("/", params)
+                self.assertContains(response, page_title, count=1, html=True)
 
     def test_search_form_on_the_plain_list(self):
         response = self.client.get("/")

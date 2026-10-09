@@ -144,6 +144,14 @@ KEEPS_THE_SEARCH = [
     ("q=%3Cscript%3E", "<script>"),
     # Wide letters are kept as typed. NFKC is done only inside the search.
     ("q=%EF%BD%8D%EF%BD%89%EF%BD%8C%EF%BD%8B", "ｍｉｌｋ"),
+    # The two joiners are kept: Persian, Hindi and emoji need them.
+    # "می‌خواهم" (Persian) has a zero-width non-joiner (U+200C).
+    (
+        "q=%D9%85%DB%8C%E2%80%8C%D8%AE%D9%88%D8%A7%D9%87%D9%85",
+        "می‌خواهم",
+    ),
+    # 👩‍💻 is a woman, a zero-width joiner (U+200D), and a laptop.
+    ("q=%F0%9F%91%A9%E2%80%8D%F0%9F%92%BB", "\U0001f469‍\U0001f4bb"),
 ]
 WHITE_SPACE = [
     ("q=%20%20milk%20", "milk"),
@@ -162,6 +170,8 @@ LONG = [
     ("q=" + "a" * 250, "a" * 200),
     # The cut ends on a space, which is removed.
     ("q=" + "a" * 199 + "%20b", "a" * 199),
+    # Clean first, then cut: invisible characters do not use up the 200.
+    ("q=" + "%E2%80%8B" * 10 + "a" * 200, "a" * 200),
 ]
 EMPTY_SEARCHES = [
     "q=",
