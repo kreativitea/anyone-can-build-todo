@@ -163,7 +163,8 @@ class Todo(models.Model):
         One UPDATE; it never touches the to-do's `done`. The view found this
         to-do through its owner first.
         """
-        Todo.objects.filter(pk=self.pk).update(edited=True)
+        # owner_id too: defence in depth, never a row of another person.
+        Todo.objects.filter(pk=self.pk, owner_id=self.owner_id).update(edited=True)
 
     def set_done(self, target):
         """Done (target=True) or Undo (target=False). Does nothing if it is already so.
@@ -199,8 +200,10 @@ class Todo(models.Model):
                 # Never build the copy again from the original: the original
                 # may have changed since Done (even its repeat).
                 # A change to the copy's steps sets its `edited` (the step views).
+                # owner_id too: defence in depth, never a copy of another person.
                 Todo.objects.filter(
                     pk=fresh.next_todo_id,
+                    owner_id=fresh.owner_id,
                     done=False,
                     next_todo=None,
                     edited=False,

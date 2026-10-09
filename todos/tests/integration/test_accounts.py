@@ -60,6 +60,16 @@ class VisitorTests(TestCase):
                     fetch_redirect_response=False,
                 )
 
+    def test_visitor_head_is_like_get(self):
+        # HEAD is a GET without the body: after log-in the page itself is fine.
+        pk = self.milk.pk
+        for url in [f"/{pk}/edit/", "/"]:
+            with self.subTest(url=url):
+                response = self.client.head(url)
+                self.assertRedirects(
+                    response, f"{LOGIN_URL}?next={url}", fetch_redirect_response=False
+                )
+
     def test_visitor_post_changes_nothing_and_comes_back_to_the_list(self):
         # After log-in the browser would GET the address; a POST-only
         # address would answer 405. So every POST goes back to the list.
@@ -269,15 +279,17 @@ class AccountBarTests(LoggedInTestCase):
 
 
 class SecretKeyTests(SimpleTestCase):
-    def start(self, **env):
-        """Load the settings in a new Python, with these environment variables."""
+    def start(self, code="import django; django.setup()", **env):
+        """Run `code` in a new Python that loads the settings, with these
+        environment variables (and no DJANGO_SECRET_KEY or DJANGO_DEBUG of ours).
+        """
         clean = {
             k: v
             for k, v in os.environ.items()
             if k not in {"DJANGO_SECRET_KEY", "DJANGO_DEBUG"}
         }
         return subprocess.run(
-            [sys.executable, "-c", "import django; django.setup()"],
+            [sys.executable, "-c", code],
             env={**clean, "DJANGO_SETTINGS_MODULE": "config.settings", **env},
             cwd=settings.BASE_DIR,
             capture_output=True,
@@ -291,6 +303,34 @@ class SecretKeyTests(SimpleTestCase):
             "ImproperlyConfigured: Set DJANGO_SECRET_KEY on a live server.",
             result.stderr,
         )
+
+    def test_an_empty_blank_or_laptop_key_on_a_live_server_refuses_to_start(self):
+        for key in [
+            "",
+            "   ",
+            "django-insecure-only-for-your-laptop",
+            "django-insecure-x",
+        ]:
+            with self.subTest(key=key):
+                result = self.start(DJANGO_DEBUG="False", DJANGO_SECRET_KEY=key)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(
+                    "ImproperlyConfigured: Set DJANGO_SECRET_KEY on a live server.",
+                    result.stderr,
+                )
+
+    def test_a_live_server_keeps_its_cookies_safe(self):
+        code = (
+            "import django; django.setup(); from django.conf import settings as s; "
+            "print(s.SESSION_COOKIE_SECURE, s.CSRF_COOKIE_SECURE, "
+            "s.SESSION_COOKIE_HTTPONLY)"
+        )
+        # A test value only, not a real key.
+        result = self.start(
+            code, DJANGO_DEBUG="False", DJANGO_SECRET_KEY="test-only-key"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.split(), ["True", "True", "True"])
 
     def test_a_live_server_with_a_secret_key_starts(self):
         # A test value only, not a real key.

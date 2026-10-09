@@ -7,7 +7,7 @@ from django.urls import reverse
 
 
 class LoginRequired(LoginRequiredMiddleware):
-    """Django's: every page needs log-in. But a POST (or other change) sends the
+    """Django's: every page needs log-in. But a POST (anything but GET or HEAD) sends the
     person back to the list after log-in.
 
     After log-in the browser GETs the `next` address. A POST-only address
@@ -16,7 +16,7 @@ class LoginRequired(LoginRequiredMiddleware):
     """
 
     def handle_no_permission(self, request, view_func):
-        if request.method == "GET":
+        if request.method in ("GET", "HEAD"):
             return super().handle_no_permission(request, view_func)
         return redirect_to_login(
             reverse("todo_list"),

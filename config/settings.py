@@ -33,7 +33,10 @@ DEBUG = os.environ.get("DJANGO_DEBUG", "True") == "True"
 
 # The secret key signs the log-in sessions. A live server must never use the
 # key above, which is in git: without its own key, it refuses to start.
-if not DEBUG and "DJANGO_SECRET_KEY" not in os.environ:
+# An empty or blank key, or a "django-insecure-" one (like the default above),
+# counts as no key.
+_live_key = os.environ.get("DJANGO_SECRET_KEY", "").strip()
+if not DEBUG and (not _live_key or _live_key.startswith("django-insecure-")):
     raise ImproperlyConfigured("Set DJANGO_SECRET_KEY on a live server.")
 
 # The addresses this site answers to, separated by commas.

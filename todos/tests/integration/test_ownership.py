@@ -4,9 +4,8 @@ Ana is logged in. Ben has his own to-dos. To ana, ben's to-do must look like
 one that does not exist: 404, and nothing changes.
 """
 
-from django.urls import reverse
+from django.urls import URLResolver, get_resolver, reverse
 
-from todos import urls as todo_urls
 from todos.models import Subtask, Todo
 from todos.tests.integration.helpers import (
     LoggedInTestCase,
@@ -16,10 +15,21 @@ from todos.tests.integration.helpers import (
     page_parts,
     page_without_csrf,
 )
+from todos.views import FILTERS, SORTS
 
 # The addresses with no to-do id: the list itself, and the actions on it.
-# Their tests are below (the list, the count, delete completed, add).
+# Their tests are below (the list, the count, delete completed, add), and the
+# canary test opens every one of them.
 LIST_URLS = {"todo_list", "todo_add", "todo_delete_completed"}
+
+# The only addresses of the whole project that are in neither MATRIX nor
+# LIST_URLS, and why:
+# - the admin (namespace "admin"): staff only, and staff see every to-do on purpose;
+# - the account pages: they show no to-dos;
+# - static files (served by WhiteNoise, not by a view; listed in case one is added).
+ALLOWED_NAMESPACES = {"admin"}
+ALLOWED_NAMES = {"login", "logout", "signup"}
+ALLOWED_PREFIXES = ("static/",)
 
 # The addresses that take a step's id after the to-do's id.
 SUBTASK_ID_URLS = {"subtask_done", "subtask_delete"}
@@ -42,6 +52,25 @@ MATRIX = [
     ("subtask_done", "post", {"done": "0"}),
     ("subtask_delete", "post", {}),
 ]
+
+
+def project_routes(patterns=None, prefix="", namespace=None):
+    """Every route of the WHOLE project: (address pattern, namespace, name).
+
+    It walks Django's URL resolver, into every include(), so an address added
+    in config/urls.py (or any other app) is found too.
+    """
+    if patterns is None:
+        patterns = get_resolver().url_patterns
+    for pattern in patterns:
+        if isinstance(pattern, URLResolver):
+            yield from project_routes(
+                pattern.url_patterns,
+                prefix + str(pattern.pattern),
+                pattern.namespace or namespace,
+            )
+        else:
+            yield prefix + str(pattern.pattern), namespace, pattern.name
 
 
 def tables():
@@ -197,8 +226,99 @@ class OwnershipTests(LoggedInTestCase):
                 self.assertIn(response.status_code, {200, 302})
 
     def test_every_url_is_in_the_matrix(self):
-        names = {pattern.name for pattern in todo_urls.urlpatterns}
+        # Every route of the whole project, except the allowlist above, is in
+        # the matrix (an address with an id) or in LIST_URLS (the canary test).
         in_matrix = {name for name, _method, _data in MATRIX}
-        self.assertEqual(names - in_matrix - LIST_URLS, set())
-        # And nothing in the matrix is an address that is gone.
-        self.assertEqual((in_matrix | LIST_URLS) - names, set())
+        checked = in_matrix | LIST_URLS
+        missing = []
+        names = set()
+        for route, namespace, name in project_routes():
+            names.add(name)
+            if (
+                namespace in ALLOWED_NAMESPACES
+                or name in ALLOWED_NAMES
+                or route.startswith(ALLOWED_PREFIXES)
+            ):
+                continue
+            if name is None or name not in checked:
+                missing.append((route, name))
+        self.assertEqual(missing, [], "add these to MATRIX or LIST_URLS")
+        # And nothing in the matrix or LIST_URLS is an address that is gone.
+        self.assertEqual(checked - names, set())
+
+
+# A word that is only in ben's to-do, notes and step. It must never reach ana.
+CANARY = "CANARY-ben-7f3a9c"
+
+
+class CanaryTests(LoggedInTestCase):
+    """Ben's to-do, notes and step carry a unique word; ana opens every page she
+    can open. If any page shows the word, a query forgot the owner.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        ben = make_user("ben")
+        cls.bens = Todo.objects.create(
+            owner=ben,
+            title=f"{CANARY} title milk",
+            notes=f"{CANARY} notes milk",
+            due_date="2026-10-12",
+            priority=Todo.Priority.HIGH,
+        )
+        Subtask.objects.create(todo=cls.bens, title=f"{CANARY} step")
+        Todo.objects.create(owner=ben, title=f"{CANARY} done milk", done=True)
+
+    def setUp(self):
+        super().setUp()
+        self.mine = self.make_todo(title="Buy milk", notes="milk notes")
+        Subtask.objects.create(todo=self.mine, title="Ana's step")
+        self.make_todo(title="Call home", done=True)
+
+    def list_queries(self):
+        """The list with each show, sort, q and selected value."""
+        queries = [{}]
+        queries += [{"show": f.value} for f in FILTERS]
+        queries += [{"sort": value} for value, _label, _order in SORTS]
+        # Part of the word (the page shows the search back, so not all of it).
+        queries += [{"q": q} for q in ["milk", "7f3a9c", "notes", "step"]]
+        queries += [
+            {"selected": pk} for pk in [self.mine.pk, self.bens.pk, self.bens.pk + 1]
+        ]
+        queries += [{"show": "completed", "sort": "title", "q": "milk"}]
+        return queries
+
+    def assert_no_canary(self, response):
+        self.assertNotIn(CANARY, response.content.decode())
+
+    def test_no_page_ana_can_open_shows_bens_words(self):
+        pages = []
+        for name in sorted(LIST_URLS):
+            pages.append((f"GET {name}", self.client.get(reverse(name))))
+        for query in self.list_queries():
+            pages.append((f"GET list {query}", self.client.get("/", query)))
+        # The add form's error page draws the list too.
+        pages.append(("POST add, empty", self.client.post(reverse("todo_add"), {})))
+        pages.append(
+            (
+                "POST delete completed, his ids",
+                self.client.post(
+                    reverse("todo_delete_completed"),
+                    {"ids": [str(self.bens.pk)]},
+                    follow=True,
+                ),
+            )
+        )
+        for name in ["todo_edit", "subtask_list"]:
+            url = reverse(name, args=[self.mine.pk])
+            pages.append((f"GET {name} (hers)", self.client.get(url)))
+        for label, response in pages:
+            with self.subTest(page=label):
+                self.assertIn(response.status_code, {200, 405})
+                self.assert_no_canary(response)
+
+    def test_my_steps_page_shows_only_my_steps(self):
+        response = self.client.get(reverse("subtask_list", args=[self.mine.pk]))
+        self.assertEqual(page_parts(response).titles, ["Ana's step"])
+        self.assert_no_canary(response)
