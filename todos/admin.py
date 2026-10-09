@@ -5,4 +5,5 @@ from .models import Todo
 
 @admin.register(Todo)
 class TodoAdmin(admin.ModelAdmin):
-    list_display = ["title", "done", "due_date"]
+    list_display = ["title", "done", "due_date", "priority"]
+    list_filter = ["priority", "done"]

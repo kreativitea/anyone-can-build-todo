@@ -10,6 +10,7 @@
     form.add { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-bottom: 1.5rem; }
     form.add input[name=title] { flex: 1 1 100%; padding: 0.5rem; font-size: 1rem; }
     form.add input[type=date] { padding: 0.4rem; font-size: 1rem; }
+    form.add select { padding: 0.4rem; font-size: 1rem; }
     .errorlist { flex: 1 1 100%; margin: 0; padding: 0; list-style: none; color: #b00020; }
     .errorlist li { padding: 0; border: 0; }
     nav.filters { display: flex; gap: 1rem; margin-bottom: 1rem; }
@@ -19,6 +20,10 @@
     li .title { flex: 1; min-width: 0; overflow-wrap: anywhere; }
     li.done .title { text-decoration: line-through; color: #666; }
     li .due { display: block; color: #666; font-size: 0.9rem; }
+    li .priority { display: inline-block; font-size: 0.8rem; padding: 0.1rem 0.4rem; border-radius: 0.25rem; white-space: nowrap; }
+    li .priority.high { font-weight: bold; color: #8b0000; background: #fde8e8; border: 1px solid #8b0000; }
+    li .priority.low { color: #555; border: 1px solid #bbb; }
+    li.done .priority { opacity: 0.6; }
     .list-footer { color: #666; font-size: 0.9rem; }
     button { padding: 0.4rem 0.8rem; font-size: 0.9rem; cursor: pointer; }
   </style>
@@ -34,6 +39,9 @@
     {{ form.due_date.errors }}
     {{ form.due_date.label_tag }}
     {{ form.due_date }}
+    {{ form.priority.errors }}
+    {{ form.priority.label_tag }}
+    {{ form.priority }}
     <button type="submit">Add</button>
   </form>
 
@@ -46,7 +54,7 @@
   <ul>
     {% for todo in todos %}
       <li class="{% if todo.done %}done{% endif %}">
-        <span class="title">{{ todo.title }}{% if todo.due_date %}<small class="due">due {{ todo.due_date|date:"j M Y" }}</small>{% endif %}</span>
+        <span class="title">{{ todo.title }}{% if todo.priority != todo.Priority.MEDIUM %} <span class="priority {{ todo.get_priority_display|lower }}">{{ todo.get_priority_display }} priority</span>{% endif %}{% if todo.due_date %}<small class="due">due {{ todo.due_date|date:"j M Y" }}</small>{% endif %}</span>
         <form method="post" action="{% url 'todo_toggle' todo.pk %}{{ list_query }}">
           {% csrf_token %}
           <button type="submit">{% if todo.done %}Undo{% else %}Done{% endif %}</button>

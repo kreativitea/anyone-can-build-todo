@@ -12,6 +12,17 @@ CSRF_INPUT = re.compile(
 )
 
 
+# The priority select box, exactly as a new, empty add form must draw it:
+# High, Medium, Low, with Medium chosen.
+PRIORITY_SELECT = (
+    '<select name="priority" id="id_priority">'
+    '<option value="3">High</option>'
+    '<option value="2" selected>Medium</option>'
+    '<option value="1">Low</option>'
+    "</select>"
+)
+
+
 def page_without_csrf(response):
     """The page's HTML without the CSRF token inputs.
 

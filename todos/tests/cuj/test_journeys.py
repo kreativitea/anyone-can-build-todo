@@ -14,17 +14,19 @@ from todos.models import Todo
 from todos.tests.integration.helpers import page_forms, page_without_csrf
 
 EMPTY = "<li>Nothing to do yet. Add something above.</li>"
+HIGH_LABEL = '<span class="priority high">High priority</span>'
 
 
-def todo_row(todo, due="", done=False):
+def todo_row(todo, due="", done=False, label=""):
     """One to-do on the list, exactly as the page must show it.
 
     `due` is the due-date text, like "due 5 Oct 2026", or "" for none.
+    `label` is the whole priority label element, or "" for none (Medium).
     """
     due_html = f'<small class="due">{due}</small>' if due else ""
     return (
         f'<li class="{"done" if done else ""}">'
-        f'<span class="title">{escape(todo.title)}{due_html}</span>'
+        f'<span class="title">{escape(todo.title)}{label}{due_html}</span>'
         f'<form method="post" action="{reverse("todo_toggle", args=[todo.pk])}">'
         f'<button type="submit">{"Undo" if done else "Done"}</button></form>'
         f'<form method="post" action="{reverse("todo_delete", args=[todo.pk])}">'
@@ -69,6 +71,8 @@ class JourneyTests(TestCase):
         page = self.client.get(reverse("todo_list"))
         self.assert_list(page, EMPTY)
 
+        # The priority is not typed: the form sends the option the page selected.
+        # The row has no label, so that option was Medium.
         page = self.press(page, "Add", title="Buy milk", due_date="2026-10-05")
         milk = Todo.objects.get()
         due = "due 5 Oct 2026"
@@ -82,3 +86,13 @@ class JourneyTests(TestCase):
 
         page = self.press(page, "Delete")
         self.assert_list(page, EMPTY)
+
+    def test_a_high_priority_todo_keeps_its_label_when_done(self):
+        page = self.client.get(reverse("todo_list"))
+
+        page = self.press(page, "Add", title="Pay rent", priority="3")
+        rent = Todo.objects.get()
+        self.assert_list(page, todo_row(rent, label=HIGH_LABEL))
+
+        page = self.press(page, "Done")
+        self.assert_list(page, todo_row(rent, done=True, label=HIGH_LABEL))
