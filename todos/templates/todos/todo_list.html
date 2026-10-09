@@ -107,7 +107,7 @@
       <dl>
         <dt>Status</dt><dd>{% if selected.done %}Completed{% else %}Active{% endif %}</dd>
         <dt>Due</dt><dd>{% if selected.due_date %}{{ selected.due_date|date:"j M Y" }}{% else %}No due date{% endif %}</dd>
-        {# Priority (6): after the rebase, <dt>Priority</dt><dd>{{ selected.get_priority_display }}</dd> goes here. #}
+        <dt>Priority</dt><dd>{{ selected.get_priority_display }}</dd>
         <dt>Created</dt><dd>{{ selected.created_at|date:"j M Y" }}</dd>
       </dl>
       {# Every control that CHANGES something goes in details-actions; Close only reads. #}
