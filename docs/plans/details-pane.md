@@ -1,7 +1,7 @@
 # Plan: a details pane (feature 21)
 
-Status: **approved.** The owner approved this plan with its three recommendations (see "Questions
-for the owner").
+Status: **approved, in progress.** The owner approved this plan with its three recommendations
+(see "Questions for the owner"). Built on `feature/details-pane`; see "What happened" at the end.
 
 This is the second version. An adversarial reviewer (a reviewer whose job is to find what is
 wrong) checked the first version by building it and running it in a real browser. There were no
@@ -632,6 +632,66 @@ The orchestrator answered these; the owner confirms:
 2. **Edit:** keep the row link "Edit <title>" **and** add "Edit" in the pane. Recommended: yes.
 3. **Search hint:** `<small class="match-hint">matches in notes</small>` on a row whose title does
    not match the search. Recommended: yes.
+
+## What happened
+
+The builder followed the plan. These are the places where it did something different, and why.
+
+1. **The starting point.** Priority (6) was **not** on `main` yet when the branch started (the
+   newest commit was "Ruff: leave Markdown files alone (#6)"). So this branch has **no Priority
+   row** in the pane. The template has a comment where it goes. `pane_element(...)` has
+   `priority=None`, which means "no Priority row". See "After the rebase" below.
+2. **The CUJ step is in a new file.** The owner decided: no real-browser tests. `main` still had the
+   Playwright journey (a small PR removes it). So the journey step is in a **new** test-client
+   journey, `todos/tests/cuj/test_details_journey.py`, and the Playwright file is not touched. It
+   adds Buy milk with a due date, "clicks" the title (it reads the link's address from the page and
+   sends a `GET`), checks the whole pane, posts Done (the pane says Completed after the redirect),
+   then Delete (no pane). Before the code it failed with "the title Buy milk is not a link".
+3. **`pane_element` takes the to-do, not only its title.** The Close link ends with
+   `#todo-<pk>`, so the builder needs the id: `pane_element(todo, *, status, due, priority, created,
+   close_url)`. The heading is `escape(todo.title)`.
+4. **`PageParts` also has `rows`**, the list behind `row(title)`. Each row is a small `Row` with
+   `id`, `classes` and `title`.
+5. **Edit (4).** The pane has a Django comment in `details-actions`, before Close, where the Edit
+   link goes. A comment draws nothing, so the page is the same.
+6. **The test data.** `Call home` gets `created_at` 3 Oct 2026 (01:00 UTC), and the escape test's
+   to-do 4 Oct 2026, so every pane in the tests has a fixed Created date.
+7. **Deliberate bugs.** Each one was made for a moment, seen failing, and put back (`views.py` was
+   copied back and compared with `cmp`):
+   - Lookup by id (`Todo.objects.filter(pk=wanted).first()`): the same-page test fails for
+     `?show=active&selected=<completed>`.
+   - No `params.pop("selected", None)`: the same-page test fails for the filtered-out id, `999` and
+     `0` (the forms carry `selected=...`).
+   - `todos.all()` in `selected_todo`: the query test fails, 5 queries instead of 4.
+   - `clean_id` without `isascii()`: the wide 5 gives `{"selected": "5"}`, and `²` and `5²` crash with
+     `ValueError`.
+   - `clean_id` without the length check: `test_bad_ids_are_ignored` crashes with `OverflowError`,
+     and the 19-digit `selected` is kept.
+   - `PageParts` without the `<a>` case: six title checks in `test_filter.py` fail.
+8. **Checked by eye** (Playwright was still installed, and was used only to take pictures, not as a
+   test):
+   - 1280 pixels, nothing selected: two columns; the grey hint "Click a to-do's title to see its
+     details." is on the right; the focus is in the add box.
+   - 1280 pixels, Buy milk selected: the pane is on the right, with a grey border and round corners:
+     the title, Status, Due, Created and Close. The row has a light blue background, a blue bar on the
+     left and a bold title. The focus is on the pane with no ring, and the next Tab goes to Close.
+     The title's left edge is at the same place with and without the selection (200 pixels).
+   - 375 pixels, nothing selected: one column, as before, and no hint.
+   - 375 pixels, Buy milk selected: the pane is under the list and the footer; the browser jumped to
+     it (the page is short, so it scrolls only a little). The row is marked the same way. The title
+     does not move (24 pixels both times).
+   - The titles are now underlined, like every link. The plan only said `color: inherit`, so this
+     was left as it is.
+
+### After the rebase on priority (6) and edit (4)
+
+- **Priority (6):** add `<dt>Priority</dt><dd>{{ selected.get_priority_display }}</dd>` after Due
+  (where the comment is); give `pane_element` the default `priority="Medium"`; set `Buy milk` to
+  High in the tests (`priority="High"` in its pane), and check that `Call home`'s pane shows Medium.
+  `title_element` gains the priority label from 6.
+- **Edit (4):** add the pane's Edit link in `details-actions`, before Close, and edit's
+  `test_pane_has_an_edit_link` (see "For later features"). Move this feature's CSS into the list
+  page's `{% block style %}`.
 
 ## PLAN CARD
 

@@ -16,7 +16,7 @@
     nav.filters { display: flex; gap: 1rem; margin-bottom: 1rem; }
     nav.filters a[aria-current="page"] { font-weight: bold; text-decoration: none; color: inherit; }
     ul { list-style: none; padding: 0; }
-    li { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0; border-bottom: 1px solid #ddd; }
+    li { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem; border-bottom: 1px solid #ddd; }
     li .title { flex: 1; min-width: 0; overflow-wrap: anywhere; }
     li.done .title { text-decoration: line-through; color: #666; }
     li .due { display: block; color: #666; font-size: 0.9rem; }
@@ -26,59 +26,96 @@
     li.done .priority { opacity: 0.6; }
     .list-footer { color: #666; font-size: 0.9rem; }
     button { padding: 0.4rem 0.8rem; font-size: 0.9rem; cursor: pointer; }
+    /* The details pane. Edit (4) moves these rules into the list page's block style. */
+    .title a { color: inherit; }
+    li.selected { background: #eef4ff; box-shadow: inset 4px 0 0 #1a56db; }
+    li.selected .title a { font-weight: bold; }
+    aside.details { margin-top: 1.5rem; padding: 1rem; border: 1px solid #ccc; border-radius: 0.5rem; overflow-wrap: anywhere; }
+    aside.details:focus { outline: none; }
+    aside.details h2 { margin-top: 0; font-size: 1.2rem; }
+    aside.details dl { display: grid; grid-template-columns: auto 1fr; gap: 0.25rem 1rem; }
+    aside.details dt { color: #555; }
+    aside.details dd { margin: 0; }
+    .pane-hint { display: none; color: #666; }
+    @media (min-width: 48rem) {
+      body { max-width: 56rem; }
+      .layout { display: grid; grid-template-columns: minmax(0, 32rem) minmax(16rem, 1fr); gap: 2rem; align-items: start; }
+      aside.details { margin-top: 0; position: sticky; top: 1rem; max-height: calc(100vh - 2rem); overflow-y: auto; }
+      .pane-hint { display: block; margin: 0; }
+    }
   </style>
 </head>
 <body>
   <h1>To-do list</h1>
 
-  <form class="add" method="post" action="{% url 'todo_add' %}{{ list_query }}">
-    {% csrf_token %}
-    {{ form.non_field_errors }}
-    {{ form.title.errors }}
-    {{ form.title }}
-    {{ form.due_date.errors }}
-    {{ form.due_date.label_tag }}
-    {{ form.due_date }}
-    {{ form.priority.errors }}
-    {{ form.priority.label_tag }}
-    {{ form.priority }}
-    <button type="submit">Add</button>
-  </form>
+  <div class="layout">
+    <div class="main">
+      <form class="add" method="post" action="{% url 'todo_add' %}{{ list_query }}">
+        {% csrf_token %}
+        {{ form.non_field_errors }}
+        {{ form.title.errors }}
+        {{ form.title }}
+        {{ form.due_date.errors }}
+        {{ form.due_date.label_tag }}
+        {{ form.due_date }}
+        {{ form.priority.errors }}
+        {{ form.priority.label_tag }}
+        {{ form.priority }}
+        <button type="submit">Add</button>
+      </form>
 
-  <nav class="filters" aria-label="Filter to-dos">
-    {% for link in filter_links %}
-      <a href="{{ link.url }}"{% if link.current %} aria-current="page"{% endif %}>{{ link.label }}</a>
-    {% endfor %}
-  </nav>
+      <nav class="filters" aria-label="Filter to-dos">
+        {% for link in filter_links %}
+          <a href="{{ link.url }}"{% if link.current %} aria-current="page"{% endif %}>{{ link.label }}</a>
+        {% endfor %}
+      </nav>
 
-  <ul>
-    {% for todo in todos %}
-      <li class="{% if todo.done %}done{% endif %}">
-        <span class="title">{{ todo.title }}{% if todo.priority != todo.Priority.MEDIUM %} <span class="priority {{ todo.get_priority_display|lower }}">{{ todo.get_priority_display }} priority</span>{% endif %}{% if todo.due_date %}<small class="due">due {{ todo.due_date|date:"j M Y" }}</small>{% endif %}</span>
-        <form method="post" action="{% url 'todo_toggle' todo.pk %}{{ list_query }}">
-          {% csrf_token %}
-          <button type="submit">{% if todo.done %}Undo{% else %}Done{% endif %}</button>
-        </form>
-        <form method="post" action="{% url 'todo_delete' todo.pk %}{{ list_query }}">
-          {% csrf_token %}
-          <button type="submit">Delete</button>
-        </form>
-      </li>
-    {% empty %}
-      <li>{{ empty_message }}</li>
-    {% endfor %}
-  </ul>
-  {% if has_todos %}
-    <div class="list-footer">
-      <p class="count">{{ remaining_count }} item{{ remaining_count|pluralize }} left</p>
-      {% if completed_ids %}
-        <form class="delete-completed" method="post" action="{% url 'todo_delete_completed' %}{{ list_query }}">
-          {% csrf_token %}
-          {% for pk in completed_ids %}<input type="hidden" name="ids" value="{{ pk }}">{% endfor %}
-          <button type="submit">Delete {{ completed_ids|length }} completed to-do{{ completed_ids|length|pluralize }}</button>
-        </form>
+      <ul>
+        {% for todo in todos %}
+          <li id="todo-{{ todo.pk }}" class="{% if todo.done %}done{% endif %}{% if todo == selected %} selected{% endif %}">
+            <span class="title"><a href="{{ select_base }}{{ todo.pk }}#details"{% if todo == selected %} aria-current="true"{% endif %}>{{ todo.title }}</a>{% if todo.priority != todo.Priority.MEDIUM %} <span class="priority {{ todo.get_priority_display|lower }}">{{ todo.get_priority_display }} priority</span>{% endif %}{% if todo.due_date %}<small class="due">due {{ todo.due_date|date:"j M Y" }}</small>{% endif %}</span>
+            <form method="post" action="{% url 'todo_toggle' todo.pk %}{{ list_query }}">
+              {% csrf_token %}
+              <button type="submit">{% if todo.done %}Undo{% else %}Done{% endif %}</button>
+            </form>
+            <form method="post" action="{% url 'todo_delete' todo.pk %}{{ list_query }}">
+              {% csrf_token %}
+              <button type="submit">Delete</button>
+            </form>
+          </li>
+        {% empty %}
+          <li>{{ empty_message }}</li>
+        {% endfor %}
+      </ul>
+      {% if has_todos %}
+        <div class="list-footer">
+          <p class="count">{{ remaining_count }} item{{ remaining_count|pluralize }} left</p>
+          {% if completed_ids %}
+            <form class="delete-completed" method="post" action="{% url 'todo_delete_completed' %}{{ list_query }}">
+              {% csrf_token %}
+              {% for pk in completed_ids %}<input type="hidden" name="ids" value="{{ pk }}">{% endfor %}
+              <button type="submit">Delete {{ completed_ids|length }} completed to-do{{ completed_ids|length|pluralize }}</button>
+            </form>
+          {% endif %}
+        </div>
       {% endif %}
     </div>
-  {% endif %}
+    {% if selected %}
+    <aside class="details" id="details" tabindex="-1" aria-label="Details">
+      <h2>{{ selected.title }}</h2>
+      <dl>
+        <dt>Status</dt><dd>{% if selected.done %}Completed{% else %}Active{% endif %}</dd>
+        <dt>Due</dt><dd>{% if selected.due_date %}{{ selected.due_date|date:"j M Y" }}{% else %}No due date{% endif %}</dd>
+        {# Priority (6): after the rebase, <dt>Priority</dt><dd>{{ selected.get_priority_display }}</dd> goes here. #}
+        <dt>Created</dt><dd>{{ selected.created_at|date:"j M Y" }}</dd>
+      </dl>
+      {# Every control that CHANGES something goes in details-actions; Close only reads. #}
+      {# Edit (4): the pane's Edit link goes here, before Close. #}
+      <p class="details-actions"><a href="{{ close_url }}#todo-{{ selected.pk }}">Close</a></p>
+    </aside>
+    {% elif has_todos %}
+    <p class="pane-hint">Click a to-do's title to see its details.</p>
+    {% endif %}
+  </div>
 </body>
 </html>

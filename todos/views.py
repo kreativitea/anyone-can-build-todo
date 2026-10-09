@@ -14,6 +14,20 @@ from .models import Todo
 # first; the next click deletes the rest.
 MAX_DELETE_AT_ONCE = 500
 
+# A real id is a plain number. 18 digits always fit in SQLite's 64-bit integer;
+# longer values may overflow.
+MAX_ID_DIGITS = 18
+
+
+def clean_id(value):
+    """The id as plain digits without leading zeros, like "5"; or None if it is not an id.
+
+    isascii() comes first: isdigit() also says yes to "５" and "²", and int("²") crashes.
+    """
+    if value and value.isascii() and value.isdigit() and len(value) <= MAX_ID_DIGITS:
+        return str(int(value))
+    return None
+
 
 class Filter(NamedTuple):
     """One filter: everything about it is in this one row."""
@@ -43,6 +57,10 @@ def list_params(data):
     show = data.get("show")
     if show in FILTER_BY_VALUE and show != DEFAULT_FILTER.value:
         params["show"] = show
+    # `selected` is always the last key: later checks (search, sort) go above.
+    selected = clean_id(data.get("selected"))
+    if selected is not None:
+        params["selected"] = selected
     return params
 
 
@@ -75,6 +93,34 @@ def filter_links(params):
     ]
 
 
+def without_selected(params):
+    """The list parameters without the selection."""
+    return {k: v for k, v in params.items() if k != "selected"}
+
+
+def select_base(params):
+    """The start of every title link: "/?show=active&selected=". The template adds the id."""
+    others = without_selected(params)
+    return (
+        reverse("todo_list")
+        + (list_query(others) + "&" if others else "?")
+        + "selected="
+    )
+
+
+def selected_todo(todos, params):
+    """The selected to-do, taken ONLY from the to-dos on the page; else None.
+
+    Never look it up by id: a to-do that is not on the page (deleted, filtered
+    out, or later: not yours) must give the same page as no selection.
+    Everything that changes `todos` must come BEFORE this call.
+    """
+    wanted = params.get("selected")
+    if wanted is None:
+        return None
+    return next((todo for todo in todos if str(todo.pk) == wanted), None)
+
+
 def back_to_list(request):
     """Send the browser back to the list, with the same list parameters.
 
@@ -88,6 +134,10 @@ def page_context(request, form):
     params = list_params(request.GET)
     todos = Todo.objects.all()
     todos = filter_todos(todos, params)
+    # Everything that changes `todos` (search, sort, ...) goes above this line.
+    selected = selected_todo(todos, params)
+    if selected is None:
+        params.pop("selected", None)  # then the page is exactly the page without it
     return {
         "todos": todos,
         "form": form,
@@ -101,6 +151,9 @@ def page_context(request, form):
         "empty_message": chosen_filter(params).empty_message,
         "list_query": list_query(params),
         "filter_links": filter_links(params),
+        "selected": selected,
+        "select_base": select_base(params),
+        "close_url": reverse("todo_list") + list_query(without_selected(params)),
     }
 
 
@@ -132,18 +185,9 @@ def todo_delete(request, pk):
     return back_to_list(request)
 
 
-# A real id is a plain number. 18 digits always fit in SQLite's 64-bit integer;
-# longer values may overflow.
-MAX_ID_DIGITS = 18
-
-
 @require_POST
 def todo_delete_completed(request):
     """Delete the completed to-dos whose ids the page sent, and only those."""
-    ids = [
-        value
-        for value in request.POST.getlist("ids")
-        if value.isascii() and value.isdigit() and len(value) <= MAX_ID_DIGITS
-    ]
+    ids = [pk for value in request.POST.getlist("ids") if (pk := clean_id(value))]
     Todo.objects.completed().filter(pk__in=ids).delete()
     return back_to_list(request)
