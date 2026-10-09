@@ -1,7 +1,7 @@
 from datetime import date
 
 from django.db import connection
-from django.test import TestCase
+from django.test import Client, TestCase
 from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 
@@ -213,3 +213,100 @@ class CountTests(TestCase):
         self.assertNotContains(response, "items left")
         self.assertNotContains(response, 'class="count"')
         self.assertNotContains(response, 'class="list-footer"')
+
+
+class DeleteCompletedTests(TestCase):
+    def setUp(self):
+        self.milk = Todo.objects.create(title="Buy milk", done=True)
+        self.home = Todo.objects.create(title="Call home", done=True)
+        self.read = Todo.objects.create(title="Read chapter 3")
+
+    def post_ids(self, ids, client=None):
+        return (client or self.client).post(
+            reverse("todo_delete_completed"), {"ids": ids}
+        )
+
+    def titles(self):
+        return set(Todo.objects.values_list("title", flat=True))
+
+    # Delete completed: new behaviour.
+
+    def test_delete_completed_removes_the_completed_ones_seen(self):
+        response = self.post_ids([self.milk.pk, self.home.pk])
+        self.assertRedirects(response, reverse("todo_list"))
+        self.assertEqual(self.titles(), {"Read chapter 3"})
+
+    def test_completed_after_the_page_loaded_survives(self):
+        # The page showed only "Buy milk" as completed. "Call home" became
+        # completed later, in another browser, so its id was not sent.
+        self.post_ids([self.milk.pk])
+        self.assertEqual(self.titles(), {"Call home", "Read chapter 3"})
+
+    def test_open_todo_is_never_deleted(self):
+        self.post_ids([self.read.pk])
+        self.assertEqual(Todo.objects.count(), 3)
+
+    def test_bad_ids_are_ignored(self):
+        response = self.post_ids(["abc", "", "²", "9" * 30, str(self.milk.pk)])
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(self.titles(), {"Call home", "Read chapter 3"})
+
+    def test_delete_completed_does_not_load_each_todo(self):
+        url = reverse("todo_delete_completed")
+        with CaptureQueriesContext(connection) as queries:
+            self.client.post(url, {"ids": [self.milk.pk, self.home.pk]})
+        sqls = [query["sql"].lstrip().upper() for query in queries]
+        self.assertTrue(any(sql.startswith("DELETE") for sql in sqls), sqls)
+        reads = [s for s in sqls if s.startswith("SELECT") and "TODOS_TODO" in s]
+        self.assertEqual(reads, [])
+
+    def test_get_cannot_delete_completed(self):
+        response = self.client.get(reverse("todo_delete_completed"))
+        self.assertEqual(response.status_code, 405)
+        self.assertEqual(Todo.objects.count(), 3)
+
+    def test_delete_completed_needs_the_csrf_token(self):
+        response = self.post_ids(
+            [self.milk.pk, self.home.pk], client=Client(enforce_csrf_checks=True)
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(Todo.objects.count(), 3)
+
+    def test_delete_completed_form_on_the_list(self):
+        response = self.client.get(reverse("todo_list"))
+        self.assertContains(
+            response,
+            '<form class="delete-completed" method="post" action="/delete-completed/">',
+        )
+        self.assertContains(
+            response,
+            '<button type="submit">Delete 2 completed to-dos</button>',
+            html=True,
+        )
+        for todo in [self.milk, self.home]:
+            self.assertContains(
+                response,
+                f'<input type="hidden" name="ids" value="{todo.pk}">',
+                html=True,
+            )
+        self.assertNotContains(
+            response,
+            f'<input type="hidden" name="ids" value="{self.read.pk}">',
+            html=True,
+        )
+
+    def test_delete_completed_button_says_one_to_do(self):
+        self.home.delete()
+        response = self.client.get(reverse("todo_list"))
+        self.assertContains(
+            response,
+            '<button type="submit">Delete 1 completed to-do</button>',
+            html=True,
+        )
+
+    # Delete completed: protect what already works.
+
+    def test_no_delete_completed_form_when_nothing_is_completed(self):
+        Todo.objects.filter(done=True).delete()
+        response = self.client.get(reverse("todo_list"))
+        self.assertNotContains(response, 'class="delete-completed"')

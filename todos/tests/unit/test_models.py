@@ -38,3 +38,10 @@ class TodoModelTests(TestCase):
         Todo.objects.create(title="Buy milk", done=True)
         Todo.objects.create(title="Call home", done=True)
         self.assertEqual(Todo.objects.remaining().count(), 0)
+
+    # Delete completed: new behaviour.
+
+    def test_completed_gives_only_completed_todos(self):
+        completed = Todo.objects.create(title="Buy milk", done=True)
+        Todo.objects.create(title="Read chapter 3")
+        self.assertEqual(list(Todo.objects.completed()), [completed])
