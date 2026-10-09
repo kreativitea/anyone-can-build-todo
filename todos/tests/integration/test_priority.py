@@ -1,3 +1,4 @@
+from django.contrib.auth.models import User
 from django.test import TestCase
 from django.urls import reverse
 
@@ -8,6 +9,25 @@ from todos.tests.integration.helpers import PRIORITY_SELECT
 HIGH_LABEL = '<span class="priority high">High priority</span>'
 MEDIUM_LABEL = '<span class="priority medium">Medium priority</span>'
 LOW_LABEL = '<span class="priority low">Low priority</span>'
+
+
+def title_with_label(title, label=""):
+    """A to-do's whole title span, with its label inside it (or no label).
+
+    Matching the whole span proves the label is in the right row, not
+    somewhere else on the page.
+    """
+    return f'<span class="title">{title}{label}</span>'
+
+
+# The priority select after a failed post where the person chose Low.
+PRIORITY_SELECT_LOW_CHOSEN = (
+    '<select name="priority" id="id_priority">'
+    '<option value="3">High</option>'
+    '<option value="2">Medium</option>'
+    '<option value="1" selected>Low</option>'
+    "</select>"
+)
 
 # The title box after a failed post, as the whole element: it keeps "Buy milk".
 TITLE_BOX_WITH_BUY_MILK = (
@@ -55,11 +75,39 @@ class PriorityTests(TestCase):
         self.assertContains(response, HIGH_LABEL, count=1, html=True)
         self.assertContains(response, MEDIUM_LABEL, count=0, html=True)
         self.assertContains(response, LOW_LABEL, count=0, html=True)
+        # Each label is inside its own to-do's title, and Medium's title has none.
+        self.assertContains(
+            response, title_with_label("Call home", HIGH_LABEL), count=1, html=True
+        )
+        self.assertContains(response, title_with_label("Buy milk"), count=1, html=True)
 
     def test_low_label_is_shown(self):
         Todo.objects.create(title="Read chapter 3", priority=Todo.Priority.LOW)
         response = self.client.get(reverse("todo_list"))
         self.assertContains(response, LOW_LABEL, count=1, html=True)
+        self.assertContains(
+            response, title_with_label("Read chapter 3", LOW_LABEL), count=1, html=True
+        )
+
+    def test_error_page_keeps_the_chosen_priority(self):
+        response = self.client.post(
+            reverse("todo_add"),
+            {"title": "Buy milk", "due_date": "not-a-date", "priority": "1"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, PRIORITY_SELECT_LOW_CHOSEN, count=1, html=True)
+
+    def test_admin_list_has_a_priority_column_and_filter(self):
+        Todo.objects.create(title="Call home", priority=Todo.Priority.HIGH)
+        admin_user = User.objects.create_superuser("admin", "admin@example.com", None)
+        self.client.force_login(admin_user)
+        response = self.client.get(reverse("admin:todos_todo_changelist"))
+        self.assertContains(
+            response, '<td class="field-priority">High</td>', count=1, html=True
+        )
+        self.assertContains(
+            response, '<a href="?priority__exact=3">High</a>', count=1, html=True
+        )
 
     # What already works, and must keep working.
 
