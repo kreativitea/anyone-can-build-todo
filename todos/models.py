@@ -15,6 +15,27 @@ NOTES_LIMIT = 500
 # The name of the list a new person gets when they sign up.
 DEFAULT_LIST_NAME = "My to-dos"
 
+# Tags (14): the longest tag name, and the most tags on one to-do.
+TAG_MAX_LENGTH = 30
+TAGS_PER_TODO = 5
+
+
+def clean_tag_name(text):
+    """A tag name: normal letters, no invisible characters, one space between words, small letters.
+
+    NFKC turns wide letters into normal ones. A control character (a line
+    break, a tab, "\\0") becomes a space; a format character (a zero-width
+    space, a soft hyphen) is removed. "" means: not a tag. Cleaning twice
+    gives the same as cleaning once.
+    """
+    text = unicodedata.normalize("NFKC", text)
+    text = "".join(
+        " " if unicodedata.category(ch) == "Cc" else ch
+        for ch in text
+        if unicodedata.category(ch) != "Cf"
+    )
+    return " ".join(text.split()).lower()
+
 
 def list_name_key(name):
     """The form of a list name that two names must not share: NFKC, then casefold.
@@ -106,6 +127,43 @@ class TodoList(models.Model):
         if exclude:
             exclude = set(exclude) - {"name_key"}
         super().validate_constraints(exclude)
+
+
+class TagQuerySet(models.QuerySet):
+    def owned_by(self, user):
+        """This person's own tags. Every tag query starts here."""
+        return self.filter(owner=user)
+
+
+class Tag(models.Model):
+    """A short word on to-dos, like "home". It belongs to the owner of the
+    to-do's list, and is used in all of that person's lists.
+
+    The name is always cleaned (clean_tag_name) before it is saved, so the
+    database only checks "the same text".
+    """
+
+    # CASCADE: deleting a user deletes their tags.
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="tags",
+    )
+    name = models.CharField(max_length=TAG_MAX_LENGTH)
+
+    objects = TagQuerySet.as_manager()
+
+    class Meta:
+        ordering = ["name"]
+        constraints = [
+            # One person has one "home"; two people can each have "home".
+            models.UniqueConstraint(
+                fields=["owner", "name"], name="unique_tag_name_per_owner"
+            ),
+        ]
+
+    def __str__(self):
+        return self.name
 
 
 class TodoQuerySet(models.QuerySet):
@@ -211,6 +269,8 @@ class Todo(models.Model):
         related_name="todos",
         verbose_name="list",
     )
+    # Set only through TodoForm / TodoEditForm, which call set_tags.
+    tags = models.ManyToManyField(Tag, blank=True, related_name="todos")
 
     objects = TodoQuerySet.as_manager()
 
@@ -225,6 +285,21 @@ class Todo(models.Model):
         # view has to remember it, and the two can never be different.
         self.owner_id = self.todo_list.owner_id
         super().save(*args, **kwargs)
+
+    def set_tags(self, names):
+        """Put exactly these tags on this to-do. Missing tags are made for the LIST's owner.
+
+        The owner never comes from the form, the address or the person who is
+        logged in: tags follow the list. The names are cleaned here, so every
+        way in gives clean names; empty ones and repeats are dropped.
+        """
+        owner = self.todo_list.owner
+        names = dict.fromkeys(n for n in map(clean_tag_name, names) if n)
+        tags = [
+            Tag.objects.owned_by(owner).get_or_create(owner=owner, name=name)[0]
+            for name in names
+        ]
+        self.tags.set(tags)
 
     @property
     def repeats(self):
@@ -309,8 +384,10 @@ class Todo(models.Model):
                     except OverflowError:
                         return  # no date after 31 Dec 9999: Done, with no copy
                     copy.save()
-                    # Same transaction: the copy and its steps, or neither.
+                    # Same transaction: the copy, its steps and tags, or none.
                     fresh.copy_subtasks_to(copy)
+                    # The same list, so the same owner's tags (tags, 14).
+                    copy.tags.set(fresh.tags.all())
                     Todo.objects.filter(pk=fresh.pk).update(next_todo=copy)
             elif fresh.next_todo_id is not None:
                 # The copy's own state decides, in one conditional DELETE.

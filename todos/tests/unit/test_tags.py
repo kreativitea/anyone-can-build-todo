@@ -198,3 +198,50 @@ class TagModelTests(TestCase):
 
     def test_str_is_the_name(self):
         self.assertEqual(str(Tag(owner=self.ana, name="home")), "home")
+
+
+class RepeatingTagTests(TestCase):
+    """A repeating to-do's next copy has the same tags (like its steps)."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.ana = make_user("ana")
+        cls.anas = first_list(cls.ana)
+
+    def test_the_next_copy_has_the_same_tags(self):
+        bins = Todo.objects.create(
+            todo_list=self.anas, title="Bins", repeat="weekly", due_date="2026-10-12"
+        )
+        bins.set_tags(["home", "weekly"])
+        bins.set_done(True)
+        bins.refresh_from_db()
+        copy = bins.next_todo
+        self.assertEqual(list(copy.tags.all()), list(bins.tags.all()))
+        # Undo deletes the copy; the tags stay on the original.
+        bins.set_done(False)
+        self.assertEqual(
+            list(bins.tags.values_list("name", flat=True)), ["home", "weekly"]
+        )
+
+
+class TagOwnerFormTests(TestCase):
+    """Sharing (20) will let an editor save a to-do in someone else's list.
+    The tags must still be the LIST owner's, never the editor's.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.ana = make_user("ana")
+        cls.ben = make_user("ben")
+        cls.bens = first_list(cls.ben)
+
+    def test_tags_belong_to_the_list_owner_not_the_person_saving(self):
+        todo = Todo.objects.create(todo_list=self.bens, title="Ben's plan")
+        # Ana saves ben's to-do (no list posted: it stays in ben's list).
+        form = TodoEditForm(
+            {"title": "Ben's plan", "tag_names": "home"}, instance=todo, user=self.ana
+        )
+        self.assertTrue(form.is_valid(), form.errors)
+        form.save()
+        self.assertEqual(todo.tags.get().owner, self.ben)
+        self.assertFalse(Tag.objects.owned_by(self.ana).exists())

@@ -16,12 +16,13 @@ class EditFormTests(SimpleTestCase):
     def test_edit_form_has_every_field_a_person_can_change(self):
         # Every model field a person may change, read from the model, so a new
         # field feature needs no change here. "done" has its own button. The
-        # owner is never in a form: the view sets it (accounts, 17).
+        # owner is never in a form: the view sets it (accounts, 17). Tags (14)
+        # are a text box, `tag_names`, not the model's `tags` box.
         expected = {
             field.name
             for field in Todo._meta.get_fields()
             if getattr(field, "editable", False) and not field.auto_created
-        } - {"done", "owner"}
+        } - {"done", "owner", "tags"} | {"tag_names"}
         self.assertEqual(set(forms.TodoEditForm(user=SOMEONE).fields), expected)
 
     def test_edit_form_does_not_change_the_add_form(self):
@@ -44,6 +45,7 @@ class EditFormTests(SimpleTestCase):
                 "aria-label": "Notes",
                 "maxlength": "500",
             },
+            "tag_names": {"placeholder": "home, urgent", "maxlength": "200"},
         }
         self.assertEqual(set(add_form.fields), set(expected))
         for name, attrs in expected.items():

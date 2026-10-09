@@ -1,7 +1,8 @@
 # Plan: tags on to-dos
 
-Status: **approved** (by the owner: 5 tags of at most 30 characters; the filter works within the
-current list; an unknown `?tag=` shows "No to-dos tagged …"). Building on `feature/lists`.
+Status: **done** on `feature/tags` (built on `feature/lists`; not merged yet). Approved by the
+owner: 5 tags of at most 30 characters; the filter works within the current list; an unknown
+`?tag=` shows "No to-dos tagged …". See "What happened" at the end.
 
 This is feature 14, in wave 5 of [the rollout plan](feature-rollout.md). The merge order in wave 5
 is: 13 lists → **14 tags** → 16 drag to reorder. Lists merges **before** this feature; drag merges
@@ -597,3 +598,62 @@ Check the old journeys still pass: `get_by_label("New to-do")` must not also fin
 2. The filter is **within the current list**. Do you want an "all lists" tag page later?
 3. A tag with no to-dos (`?tag=banana`) shows "No to-dos tagged banana" instead of quietly showing
    the whole list. OK?
+
+## What happened
+
+Built on `feature/lists` (lists, 13, not merged yet), tests first.
+
+**Names.** CONVENTIONS wins over this plan where they differ: the foreign key is `todo_list`, not
+`list`. So `set_tags` uses `self.todo_list.owner`, and the filter is
+`tags__owner=F("todo_list__owner")`.
+
+**The red run.** The tests were written and committed first. Before the code: the two new test
+files could not import (`Tag` and `clean_tag_name` did not exist), the canary test could not set
+up (`Todo` had no `set_tags`), and the new journey found no "Tags" label. Every other test passed.
+
+**Differences from the plan, and why.**
+
+- `todo_add` on the lists branch saves with `form.save()`, not `save(commit=False)`. `save()`
+  calls `_save_m2m()` by itself, so **no view changed**. `todo_edit` already called
+  `form.save_m2m()`. A unit test checks `save(commit=False)` + `save_m2m()` too.
+- `Tag.objects.owned_by(user)` is new: the guard test (accounts, 17) now also checks `Tag`, so
+  every tag query needs a scoped entry point. `set_tags` uses
+  `Tag.objects.owned_by(owner).get_or_create(owner=owner, name=name)`.
+- **A tag link drops `selected`** (the pane closes). The plan's `without_tag` kept it, which would
+  put `selected` before `tag` in the address; `selected` must stay last.
+- **Repeating to-dos copy their tags** to the next copy (like their steps). The plan did not say;
+  the repeating guard test asked for a decision. The copy is in the same list, so the tags are
+  the same owner's. A unit test checks it.
+- The tag links are a small template, `tag_list.html`, used by the row and by the details pane,
+  which has a **Tags** row after Priority (the pane's tags come from the same prefetch).
+- `?tag=` runs after `sort_todos` (`tag_todos`), then `prefetch_related("tags")`, both before
+  `selected_todo`.
+- The journey uses the test client (CONVENTIONS: no real-browser tests).
+- Two existing tests learned about the new field: the edit form's field list (`tag_names`, not
+  `tags`) and the add form's widgets.
+
+**Deliberate bugs, each caught, then put back:** no `_save_m2m` (10 tests, the journey too);
+`set_tags` with the person saving instead of the list owner
+(`test_tags_belong_to_the_list_owner_not_the_person_saving`); the prefetch after `selected_todo`
+(`test_selecting_a_tagged_todo_adds_no_queries` and two pane tests); no prefetch at all (the
+query-count tests); the filter without the owner condition
+(`test_a_tag_of_the_same_name_from_another_person_does_not_match`); a page with every to-do (the
+canary, `test_another_persons_tags_never_appear` and many more); no `{% if %}` around the tag list
+(`test_no_tags_no_list` and the journeys); the name not encoded in the link
+(`test_tag_link_is_safe`, `test_tag_link_with_a_space_works`); `tag` not kept by `list_params`
+(16 tests).
+
+**Migration.** `0013_tag_todo_tags_tag_unique_tag_name_per_owner` (made by Django; the merge queue
+makes it again). Checked on a database at 0012 with two to-dos: forward keeps them (no tags),
+`set_tags` works, backward to 0012 removes both tag tables and keeps the to-dos, forward again
+works.
+
+**By eye** (headless Chrome, 1280 × 800, logged in through the log-in form, own database; then the
+server was stopped and the database deleted):
+
+- `tags-list-1280.png`: the Tags box with "home, urgent" and "separated by commas" after Repeats;
+  each row's tags as small rounded links between the title and Edit; no empty space on "Pay rent".
+- `tags-filter-home-1280.png` / `tags-pane-1280.png`: "Tagged **home** · Show all tags" above the
+  list, only the three `home` to-dos, the chosen tag bold with a blue border, and the pane's Tags
+  row.
+- `tags-filter-none-1280.png`: `No to-dos tagged "banana".`; the count still says "4 items left".

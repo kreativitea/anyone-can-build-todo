@@ -15,7 +15,7 @@ from django.urls import reverse
 from django.views.decorators.http import require_http_methods, require_POST
 
 from .forms import SubtaskForm, TodoEditForm, TodoForm, TodoListForm
-from .models import Todo, TodoList
+from .models import TAG_MAX_LENGTH, Todo, TodoList, clean_tag_name
 
 # Django refuses a form with more than 1,000 fields, and then nothing is
 # deleted. So the delete-completed button offers at most this many, oldest
@@ -142,6 +142,10 @@ def list_params(data):
     # Only a value from SORTS is kept; the default is dropped, like show=all.
     if data.get("sort") in SORT_ORDERS and data["sort"] != DEFAULT_SORT:
         params["sort"] = data["sort"]
+    # Tags (14): only the shape is checked here (no database), like show and q.
+    tag = clean_tag_name(data.get("tag") or "")
+    if tag and len(tag) <= TAG_MAX_LENGTH:
+        params["tag"] = tag
     # `selected` is always the last key: later checks (search, sort) go above.
     selected = clean_id(data.get("selected"))
     if selected is not None:
@@ -193,6 +197,24 @@ def search_todos(todos, params):
         title_match |= Q(title__icontains=word)
         notes_match |= Q(notes__icontains=word)
     return todos.filter(title_match | notes_match).annotate(title_match=title_match)
+
+
+def tag_todos(todos, params):
+    """Only the to-dos with the chosen tag: a tag of the to-do's LIST owner.
+
+    `todos` already has only the to-dos of this list. F("todo_list__owner")
+    reads the list's owner from the same row, so another person's tag of the
+    same name never matches (also on a shared list, later).
+    """
+    tag = params.get("tag")
+    if tag:
+        return todos.filter(tags__name=tag, tags__owner=F("todo_list__owner"))
+    return todos
+
+
+def without(params, *names):
+    """The list parameters without these names."""
+    return {k: v for k, v in params.items() if k not in names}
 
 
 def filter_links(params, list_id):
@@ -294,11 +316,15 @@ def page_context(request, form, current_list):
     todos = filter_todos(todos, params)
     todos = search_todos(todos, params)
     todos = sort_todos(todos, params)
-    # Everything that changes `todos` (search, sort, ...) goes above this line.
+    todos = tag_todos(todos, params)
+    # The tags of every row in ONE more query; the rows read them from memory.
+    todos = todos.prefetch_related("tags")
+    # Everything that changes `todos` (search, sort, tags, ...) goes above this line.
     selected = selected_todo(todos, params)
     if selected is None:
         params.pop("selected", None)  # then the page is exactly the page without it
     without_q = {k: v for k, v in params.items() if k != "q"}
+    here = reverse("todo_list", args=[list_id])
     return {
         "todos": todos,
         "form": form,
@@ -310,6 +336,11 @@ def page_context(request, form, current_list):
             .values_list("pk", flat=True)[:MAX_DELETE_AT_ONCE]
         ),
         "empty_message": chosen_filter(params).empty_message,
+        "current_tag": params.get("tag", ""),
+        # A tag link shows a new group: it drops the selection (the pane closes).
+        "tag_link_prefix": here
+        + list_query({**without(params, "tag", "selected"), "tag": ""}),
+        "clear_tag_url": here + list_query(without(params, "tag")),
         "list_query": list_query(params),
         "filter_links": filter_links(params, list_id),
         "sort_links": sort_links(params, list_id),

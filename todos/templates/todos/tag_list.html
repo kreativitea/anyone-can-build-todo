@@ -1,0 +1,7 @@
+{% comment %}
+  The tags of one to-do, as small links (tags, 14). `tags` is todo.tags.all,
+  read from the list's prefetch. Each link is the list with ?tag=<name>, after
+  the other list settings (tag_link_prefix ends with "tag="). urlencode:'' makes
+  every special character safe in the address (& = / a space); the name itself
+  is escaped by Django. No tags: nothing at all, not an empty <ul>.
+{% endcomment %}{% if tags %}<ul class="tags" aria-label="Tags">{% for tag in tags %}<li><a class="tag" href="{{ tag_link_prefix }}{{ tag.name|urlencode:'' }}"{% if tag.name == current_tag %} aria-current="true"{% endif %}>{{ tag.name }}</a></li>{% endfor %}</ul>{% endif %}
