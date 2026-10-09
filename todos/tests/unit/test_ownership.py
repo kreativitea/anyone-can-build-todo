@@ -73,8 +73,11 @@ class OwnerModelTests(TestCase):
 # to-do: `todo.subtasks`); no generic view or form is built on the models.
 # Lists (13): `TodoList.objects` goes on with `.for_user(` (lists a person may
 # use), `.owned_by(` (owner-only actions) or `.create_default(` (sign-up).
+# Tags (14): `Tag.objects` goes on with `.owned_by(` (a person's own tags),
+# and a filter on `tags__name` names `tags__owner=` in the same call.
 # Never a raw owner filter: sharing (20) replaces for_user, and must find
 # every caller.
+TAG_CALL_ARGS = r"(?:(?!tags__owner=)(?:[^()]|\([^()]*\)))*"
 UNSCOPED = [
     re.compile(r"\bTodoList\.objects\b(?!\.(for_user|owned_by|create_default)\()"),
     re.compile(r"\bTodoList\._(default|base)_manager\b"),
@@ -88,7 +91,17 @@ UNSCOPED = [
     re.compile(r"get_object_or_404\(\s*Subtask\b"),
     re.compile(r"get_list_or_404\(\s*Todo\b(?!\.objects\.for_user\()"),
     re.compile(r"get_list_or_404\(\s*Subtask\b"),
-    re.compile(r"\bmodel\s*=\s*(Todo|Subtask|TodoList)\b"),
+    re.compile(r"\bTag\.objects\b(?!\.owned_by\()"),
+    re.compile(r"\bTag\._(default|base)_manager\b"),
+    # A filter by tag name must ask for the tag's owner in the SAME call
+    # (one filter(), one join). TAG_CALL_ARGS: the text inside one call, with
+    # one level of inner (...), that never says tags__owner=.
+    re.compile(
+        rf"\({TAG_CALL_ARGS}\btags__name(?:__\w+)?={TAG_CALL_ARGS}\)",
+    ),
+    re.compile(r"get_object_or_404\(\s*Tag\b(?!\.objects\.owned_by\()"),
+    re.compile(r"get_list_or_404\(\s*Tag\b(?!\.objects\.owned_by\()"),
+    re.compile(r"\bmodel\s*=\s*(Todo|Subtask|TodoList|Tag)\b"),
     # A model looked up by name skips every check above (only data migrations may).
     re.compile(r"\bget_model\("),
     re.compile(r"\.model\.objects\b"),
@@ -206,6 +219,15 @@ class OwnerGuardTests(SimpleTestCase):
             "class ListDetail(DetailView): model = TodoList",
             'TodoList = apps.get_model("todos", "TodoList")',
             'lists = django_apps.get_model("todos.TodoList").objects.all()',
+            "tags = Tag.objects.filter(name=name)",
+            "tag, _ = Tag.objects.get_or_create(owner=owner, name=name)",
+            "tag = get_object_or_404(Tag, pk=pk)",
+            "Tag._default_manager.all()",
+            "tags = get_list_or_404(Tag, owner=user)",
+            "    model = Tag",
+            "todos = todos.filter(tags__name=tag)",
+            'todos.filter(tags__name=name).filter(tags__owner=F("todo_list__owner"))',
+            "todos.filter(Q(tags__name__in=names))",
         ]:
             with self.subTest(line=line):
                 self.assertTrue(any(p.search(line) for p in UNSCOPED))
@@ -220,6 +242,10 @@ class OwnerGuardTests(SimpleTestCase):
             "TodoList.objects.create_default(user)",
             "get_object_or_404(TodoList.objects.for_user(request.user), pk=list_id)",
             "get_object_or_404(TodoList.objects.owned_by(request.user), pk=list_id)",
+            "Tag.objects.owned_by(owner).get_or_create(owner=owner, name=name)",
+            "model = TagAdmin",
+            'todos.filter(tags__name=tag, tags__owner=F("todo_list__owner"))',
+            'todos.filter(tags__owner=F("todo_list__owner"), tags__name=tag)',
         ]:
             with self.subTest(line=line):
                 self.assertFalse(any(p.search(line) for p in UNSCOPED))

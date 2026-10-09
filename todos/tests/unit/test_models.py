@@ -149,6 +149,9 @@ class RepeatModelTests(TestCase):
             if getattr(field, "editable", False)
             and not field.auto_created
             and field.name not in {"done", "due_date", "created_at"}
+            # Many-to-many: only a SAVED copy can have them. The tags are
+            # copied after the copy is saved (test_tags.py).
+            and not field.many_to_many
         ]
         for name in names:
             with self.subTest(field=name):

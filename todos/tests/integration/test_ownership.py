@@ -319,7 +319,8 @@ class OwnershipTests(LoggedInTestCase):
         self.assertEqual(checked - names, set())
 
 
-# A word that is only in ben's to-do, notes and step. It must never reach ana.
+# A word that is only in ben's to-do, notes, step and tag. It must never reach
+# ana, in big or small letters (a tag name is always in small letters).
 CANARY = "CANARY-ben-7f3a9c"
 
 
@@ -342,16 +343,19 @@ class CanaryTests(LoggedInTestCase):
             priority=Todo.Priority.HIGH,
         )
         Subtask.objects.create(todo=cls.bens, title=f"{CANARY} step")
+        # Tags (14): his own tag with the word, and a "home" like ana's.
+        cls.bens.set_tags([f"{CANARY} tag", "home"])
         Todo.objects.create(todo_list=secret, title=f"{CANARY} done milk", done=True)
 
     def setUp(self):
         super().setUp()
         self.mine = self.make_todo(title="Buy milk", notes="milk notes")
+        self.mine.set_tags(["home"])
         Subtask.objects.create(todo=self.mine, title="Ana's step")
         self.make_todo(title="Call home", done=True)
 
     def list_queries(self):
-        """The list with each show, sort, q and selected value."""
+        """The list with each show, sort, q, tag and selected value."""
         queries = [{}]
         queries += [{"show": f.value} for f in FILTERS]
         queries += [{"sort": value} for value, _label, _order in SORTS]
@@ -361,10 +365,13 @@ class CanaryTests(LoggedInTestCase):
             {"selected": pk} for pk in [self.mine.pk, self.bens.pk, self.bens.pk + 1]
         ]
         queries += [{"show": "completed", "sort": "title", "q": "milk"}]
+        # Tags (14): a tag both have, part of his tag, and his to-do selected.
+        queries += [{"tag": tag} for tag in ["home", "7f3a9c", "tag"]]
+        queries += [{"tag": "home", "selected": self.bens.pk}]
         return queries
 
     def assert_no_canary(self, response):
-        self.assertNotIn(CANARY, response.content.decode())
+        self.assertNotIn(CANARY.lower(), response.content.decode().lower())
 
     def test_no_page_ana_can_open_shows_bens_words(self):
         pages = []

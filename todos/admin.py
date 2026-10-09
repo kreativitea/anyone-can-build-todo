@@ -2,7 +2,7 @@ from django.contrib import admin
 from django.db import models
 
 from .forms import NotesField
-from .models import Subtask, Todo, TodoList
+from .models import Subtask, Tag, Todo, TodoList
 
 
 class SubtaskInline(admin.TabularInline):
@@ -27,6 +27,22 @@ class TodoListAdmin(admin.ModelAdmin):
         return []
 
 
+@admin.register(Tag)
+class TagAdmin(admin.ModelAdmin):
+    """Staff see every tag, of every person. Read-only: the admin cannot make
+    "HOME" next to "home", or move a tag to another person. Deleting a tag is
+    allowed: it only takes it off the to-dos.
+    """
+
+    list_display = ["name", "owner"]
+    list_filter = ["owner"]
+    search_fields = ["name"]
+    readonly_fields = ["owner", "name"]
+
+    def has_add_permission(self, request):
+        return False
+
+
 @admin.register(Todo)
 class TodoAdmin(admin.ModelAdmin):
     list_display = [
@@ -41,7 +57,9 @@ class TodoAdmin(admin.ModelAdmin):
     # Staff see every to-do, of every person, on purpose.
     list_filter = ["owner", "priority", "repeat", "done"]
     # The owner always follows the list (Todo.save): choose the list instead.
-    readonly_fields = ["owner"]
+    # Tags: the normal box would offer EVERY person's tags. Tags are set only
+    # through the add form and the edit page.
+    readonly_fields = ["owner", "tags"]
     # Ticking "done" here makes no next copy: only the Done button does.
     # Notes are the only TextField: count a line break as one character, like our form.
     formfield_overrides = {models.TextField: {"form_class": NotesField}}

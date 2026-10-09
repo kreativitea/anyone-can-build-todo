@@ -1,6 +1,21 @@
+import re
+import unicodedata
+
 from django import forms
 
-from .models import Subtask, Todo, TodoList, list_name_key
+from .models import (
+    TAG_MAX_LENGTH,
+    TAGS_PER_TODO,
+    Subtask,
+    Todo,
+    TodoList,
+    clean_tag_name,
+    list_name_key,
+)
+
+# The tags in the Tags box are split at a comma, or at the Japanese comma "、"
+# (NFKC does not change "、"; it does change the wide "，" and small "﹐").
+TAG_SEPARATORS = re.compile("[,、]")
 
 
 class NotesField(forms.CharField):
@@ -44,6 +59,15 @@ class TodoForm(forms.ModelForm):
         empty_value=Todo.Repeat.NONE,
         initial=Todo.Repeat.NONE,
     )
+    # Tags (14): one text box, not a model field (`tags` is the model field).
+    # Saved in _save_m2m. max_length refuses a huge post early.
+    tag_names = forms.CharField(
+        label="Tags",
+        required=False,
+        max_length=200,
+        help_text="separated by commas",
+        widget=forms.TextInput(attrs={"placeholder": "home, urgent"}),
+    )
 
     class Meta:
         model = Todo
@@ -65,6 +89,38 @@ class TodoForm(forms.ModelForm):
             ),
             "notes": forms.Textarea(attrs={"rows": 3, "aria-label": "Notes"}),
         }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.instance.pk:
+            # The edit page: the saved tags, in a-b-c order (Tag's ordering).
+            names = (tag.name for tag in self.instance.tags.all())
+            self.initial["tag_names"] = ", ".join(names)
+
+    def clean_tag_names(self):
+        """The Tags box as a list of clean names: no empty ones, no repeats.
+
+        NFKC on the whole box first, so the wide and small commas become ","
+        before the split. Too long a name, or too many, is an error (refused,
+        never cut: this is saved data).
+        """
+        text = unicodedata.normalize("NFKC", self.cleaned_data["tag_names"])
+        pieces = map(clean_tag_name, TAG_SEPARATORS.split(text))
+        names = list(dict.fromkeys(name for name in pieces if name))
+        if any(len(name) > TAG_MAX_LENGTH for name in names):
+            raise forms.ValidationError(
+                f"A tag can be at most {TAG_MAX_LENGTH} characters."
+            )
+        if len(names) > TAGS_PER_TODO:
+            raise forms.ValidationError(f"At most {TAGS_PER_TODO} tags on one to-do.")
+        return names
+
+    def _save_m2m(self):
+        """Django saves many-to-many data here: at once with save(), or later
+        with save_m2m() after save(commit=False). So the tags are saved both ways.
+        """
+        super()._save_m2m()
+        self.instance.set_tags(self.cleaned_data["tag_names"])
 
     def save(self, commit=True):
         """Save, and remember the due date's day for a monthly repeat.

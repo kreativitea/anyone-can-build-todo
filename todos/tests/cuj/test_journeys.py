@@ -25,6 +25,7 @@ from todos.tests.integration.helpers import (
     page_forms,
     page_parts,
     page_without_csrf,
+    tag_list,
     title_element,
     toggle_form,
 )
@@ -36,21 +37,25 @@ HIGH_LABEL = '<span class="priority high">High priority</span>'
 HOME = "/"
 
 
-def todo_row(todo, done=False, repeat="", progress=""):
+def todo_row(todo, done=False, repeat="", progress="", tags="", query=""):
     """One to-do on the list, exactly as the page must show it.
 
     The title, its priority label and its due date come from `title_element`,
     which builds them from the to-do itself. `repeat` is the words an open
     repeating to-do shows, like "Every week". `progress` is the steps line,
-    inside the title block. Then the Edit link, Done and Delete.
+    inside the title block. `tags` is the row's tag list (from `tag_list`),
+    the last line of the title block. Then the Edit link, Done and Delete. `query`
+    is the list query that the links and forms keep, like "?tag=home".
     """
+    edit = reverse("todo_edit", args=[todo.pk]) + query
+    delete = reverse("todo_delete", args=[todo.pk]) + query
     return (
         f'<li id="todo-{todo.pk}" class="{"done" if done else ""}">'
-        f"{title_element(todo, repeat=repeat, progress=progress)}"
-        f'<a class="edit" href="{reverse("todo_edit", args=[todo.pk])}" '
+        f"{title_element(todo, query, repeat=repeat, progress=progress, tags=tags)}"
+        f'<a class="edit" href="{escape(edit)}" '
         f'aria-label="Edit {escape(todo.title)}">Edit</a>'
-        f"{toggle_form(todo, done)}"
-        f'<form method="post" action="{reverse("todo_delete", args=[todo.pk])}">'
+        f"{toggle_form(todo, done, query)}"
+        f'<form method="post" action="{escape(delete)}">'
         '<button type="submit">Delete</button></form>'
         "</li>"
     )
@@ -310,3 +315,44 @@ class JourneyTests(TestCase):
         names = [name for name, _href in PageLinks(page.content.decode()).links]
         self.assertNotIn("Shopping", names)
         self.assertEqual(Todo.objects.count(), 0)
+
+    def test_tag_a_todo_and_filter_by_it(self):
+        # Tags (14). Ana tags two to-dos, then clicks a tag to see only those.
+        make_user("ana")
+        page = log_in(self.client, "ana")
+        list_id = first_list(get_user_model().objects.get(username="ana")).pk
+        # The add form has a Tags box, with its own label.
+        self.assertContains(
+            page, '<label for="id_tag_names">Tags:</label>', count=1, html=True
+        )
+
+        page = self.press(page, "Add", title="Buy milk", tag_names="home, urgent")
+        page = self.press(page, "Add", title="Write report", tag_names="work")
+        milk = Todo.objects.get(title="Buy milk")
+        report = Todo.objects.get(title="Write report")
+        self.assert_list(
+            page, todo_row(milk, tags=tag_list(list_id, ["home", "urgent"]))
+        )
+        self.assert_list(page, todo_row(report, tags=tag_list(list_id, ["work"])))
+
+        # Click "home": only "Buy milk", and the line "Tagged home".
+        page = self.client.get(link_href(page, "home"))
+        self.assertEqual(page_parts(page).titles, ["Buy milk"])
+        on_home = list_path(list_id, "?tag=home")
+        self.assertContains(
+            page,
+            '<p class="current-tag">Tagged <strong>home</strong> · '
+            f'<a href="{list_path(list_id)}">Show all tags</a></p>',
+            count=1,
+            html=True,
+        )
+
+        # Done: she stays on the "home" tag.
+        page = self.press(page, "Done", lands_on=on_home)
+        milk.refresh_from_db()
+        tags = tag_list(list_id, ["home", "urgent"], current="home")
+        self.assert_list(page, todo_row(milk, done=True, tags=tags, query="?tag=home"))
+
+        # "Show all tags": both to-dos again.
+        page = self.client.get(link_href(page, "Show all tags"))
+        self.assertEqual(page_parts(page).titles, ["Write report", "Buy milk"])

@@ -7,6 +7,7 @@ so the tests can compare whole things instead of searching for a few words.
 import re
 from html.parser import HTMLParser
 from typing import NamedTuple
+from urllib.parse import quote
 
 from django.contrib.auth import get_user_model
 from django.test import Client, TestCase
@@ -498,7 +499,7 @@ def show_date(day):
 
 
 def title_element(
-    todo, query="", selected=False, match_hint=False, repeat="", progress=""
+    todo, query="", selected=False, match_hint=False, repeat="", progress="", tags=""
 ):
     """The whole <span class="title"> of one row: the link, the search's
     "matches in notes" hint, the priority label (High or Low; Medium has none),
@@ -510,6 +511,8 @@ def title_element(
     "" means no repeat span (a to-do that does not repeat, or a completed one).
     `progress` is the whole "1 of 3 steps" element (its own line, last in the
     title block), or "" for a to-do with no steps.
+    `tags` is the whole tag list (from `tag_list`): its own line, after the
+    steps, or "" for a to-do with no tags.
     """
     joiner = "&" if query else "?"
     href = f"{list_path(todo.todo_list_id, escape(query))}{joiner}selected={todo.pk}#details"
@@ -527,8 +530,29 @@ def title_element(
     repeat_span = f'<span class="repeat">{repeat}</span>' if repeat else ""
     return (
         f'<span class="title"><a href="{href}"{current}>{escape(todo.title)}</a>'
-        f"{hint}{label}{due}{repeat_span}{progress}</span>"
+        f"{hint}{label}{due}{repeat_span}{progress}{tags}</span>"
     )
+
+
+def tag_list(list_id, names, query="", current=""):
+    """The tags of one to-do, exactly as the page must show it: a list
+    (role="list") of links, inside the title block, so it is a <span>.
+
+    Each tag is a link to the list `list_id` with `tag=<name>` after the other
+    list settings in `query` (like "?show=active"). The name in the address is
+    encoded like the template's `urlencode:''` (a space is %20); the text is
+    escaped. The link of the `current` tag has aria-current="true".
+    """
+    joiner = "&" if query else "?"
+    items = []
+    for name in names:
+        href = f"{list_path(list_id, query)}{joiner}tag={quote(name, safe='')}"
+        mark = ' aria-current="true"' if name == current else ""
+        items.append(
+            f'<span role="listitem"><a class="tag" href="{escape(href)}"{mark}>'
+            f"{escape(name)}</a></span>"
+        )
+    return f'<span class="tags" role="list" aria-label="Tags">{"".join(items)}</span>'
 
 
 def toggle_form(todo, done=False, query=""):
@@ -554,6 +578,7 @@ def pane_element(
     edit_url=None,
     repeats=None,
     steps=None,
+    tags=None,
 ):
     """The whole details <aside>, exactly as the page must show it.
 
@@ -567,6 +592,8 @@ def pane_element(
     "Every week". Its row comes right after Due.
     `steps` (None: no Steps row) is (done, total, href): the row "Steps: 1 of 3
     done", a link to the steps page. It comes before the notes.
+    `tags` (None: no Tags row) is the whole tag list, from `tag_list()`. Its
+    row comes right after Priority.
     """
     if edit_url is None:
         query = close_url[close_url.index("?") :] if "?" in close_url else ""
@@ -577,6 +604,7 @@ def pane_element(
         ("Due", due),
         *([("Repeats", repeats)] if repeats is not None else []),
         ("Priority", priority),
+        *([("Tags", tags)] if tags is not None else []),
         ("Created", created),
     ]
     dl = "".join(f"<dt>{name}</dt><dd>{value}</dd>" for name, value in rows)
