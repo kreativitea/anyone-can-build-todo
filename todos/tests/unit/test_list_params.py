@@ -224,6 +224,8 @@ class SearchParamsTests(SimpleTestCase):
         rows = KEEPS_THE_SEARCH + WHITE_SPACE + INVISIBLE + LONG
         queries = [query for query, _ in rows]
         queries += EMPTY_SEARCHES + ["q=milk&show=active"]
+        # Sort (9): sort_links and filter_links call list_params again.
+        queries += ["sort=due", "show=active&q=milk&sort=title"]
         for query in queries:
             with self.subTest(query=query):
                 once = list_params(QueryDict(query))
@@ -239,3 +241,80 @@ class SearchParamsTests(SimpleTestCase):
         for params, expected in cases:
             with self.subTest(params=params):
                 self.assertEqual(list_query(params), expected)
+
+
+class SortParamsTests(SimpleTestCase):
+    """Sort (feature 9): ?sort=<value> is a list parameter."""
+
+    # Sort: new behaviour.
+
+    def test_list_params_keeps_the_sort(self):
+        for value in ["due", "priority", "title"]:
+            with self.subTest(sort=value):
+                self.assertEqual(
+                    list_params(QueryDict(f"sort={value}")), {"sort": value}
+                )
+
+    def test_list_params_order_is_show_q_sort(self):
+        result = list_params(QueryDict("sort=due&q=milk&show=active"))
+        self.assertEqual(list(result), ["show", "q", "sort"])
+
+    def test_selected_stays_after_the_sort(self):
+        result = list_params(QueryDict("selected=5&sort=due&show=active"))
+        self.assertEqual(list(result), ["show", "sort", "selected"])
+
+    def test_sort_links(self):
+        # Imported here, so only this test fails while sort_links is missing.
+        from todos.views import sort_links
+
+        self.assertEqual(
+            sort_links({"show": "active"}),
+            [
+                {"label": "Date added", "url": "/?show=active", "current": True},
+                {
+                    "label": "Due date",
+                    "url": "/?show=active&sort=due",
+                    "current": False,
+                },
+                {
+                    "label": "Priority",
+                    "url": "/?show=active&sort=priority",
+                    "current": False,
+                },
+                {
+                    "label": "Title",
+                    "url": "/?show=active&sort=title",
+                    "current": False,
+                },
+            ],
+        )
+        chosen = [
+            link["label"] for link in sort_links({"sort": "title"}) if link["current"]
+        ]
+        self.assertEqual(chosen, ["Title"])
+        # The selection stays, and stays last.
+        self.assertEqual(
+            [link["url"] for link in sort_links({"selected": "5"})],
+            [
+                "/?selected=5",
+                "/?sort=due&selected=5",
+                "/?sort=priority&selected=5",
+                "/?sort=title&selected=5",
+            ],
+        )
+
+    # Sort: protect what already works.
+
+    def test_list_params_drops_the_default_and_unknown_sorts(self):
+        for query in [
+            "sort=created",
+            "sort=",
+            "sort=banana",
+            "sort=TITLE",
+            "sort=-title",
+            "sort=title%0D%0A",  # a line break after the value
+            "sort=title%26next%3Dx",  # a hidden "&next=x" inside the value
+            "",  # no sort at all
+        ]:
+            with self.subTest(query=query):
+                self.assertEqual(list_params(QueryDict(query)), {})
