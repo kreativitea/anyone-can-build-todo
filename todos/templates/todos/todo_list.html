@@ -10,6 +10,8 @@
     details.add-notes { flex: 1 1 100%; }
     details.add-notes textarea { display: block; width: 100%; box-sizing: border-box; margin-top: 0.5rem; padding: 0.5rem; font: inherit; resize: vertical; }
     form.add .errorlist { flex: 1 1 100%; }
+    form.search { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-bottom: 1rem; }
+    form.search input[type=search] { flex: 1 1 10rem; padding: 0.4rem; font-size: 1rem; }
     nav.filters { display: flex; gap: 1rem; margin-bottom: 1rem; }
     nav.filters a[aria-current="page"] { font-weight: bold; text-decoration: none; color: inherit; }
     ul { list-style: none; padding: 0; }
@@ -69,6 +71,14 @@
         <button type="submit">Add</button>
       </form>
 
+      <form class="search" role="search" method="get" action="{% url 'todo_list' %}">
+        {% for name, value in search_keeps %}<input type="hidden" name="{{ name }}" value="{{ value }}">{% endfor %}
+        <label for="search-q">Search to-dos</label>
+        <input type="search" id="search-q" name="q" value="{{ q }}" maxlength="{{ search_max_length }}">
+        <button type="submit">Search</button>
+        {% if q %}<a href="{{ clear_search_url }}">Clear search</a>{% endif %}
+      </form>
+
       <nav class="filters" aria-label="Filter to-dos">
         {% for link in filter_links %}
           <a href="{{ link.url }}"{% if link.current %} aria-current="page"{% endif %}>{{ link.label }}</a>
@@ -90,7 +100,7 @@
             </form>
           </li>
         {% empty %}
-          <li>{{ empty_message }}</li>
+          <li>{% if q %}{{ no_match_start }} "{{ q }}".{% else %}{{ empty_message }}{% endif %}</li>
         {% endfor %}
       </ul>
       {% if has_todos %}

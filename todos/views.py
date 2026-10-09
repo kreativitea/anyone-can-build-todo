@@ -1,9 +1,11 @@
+import unicodedata
 from collections.abc import Callable
 from typing import NamedTuple
 from urllib.parse import urlencode
 
 from django.db import DatabaseError, transaction
 from django.http import Http404
+from django.db.models import Q
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_http_methods, require_POST
@@ -37,17 +39,56 @@ class Filter(NamedTuple):
     value: str  # the value in the address, ?show=<value>
     label: str  # the word on the link
     empty_message: str  # what the list says when nothing matches
+    no_match_start: str  # with a search: the message before the word
     apply: Callable  # makes the list of to-dos smaller
 
 
 # The one table of filters. The first row is the default: it needs no ?show=.
 FILTERS = [
-    Filter("all", "All", "Nothing to do yet. Add something above.", lambda t: t),
-    Filter("active", "Active", "Nothing left to do.", lambda t: t.remaining()),
-    Filter("completed", "Completed", "Nothing completed yet.", lambda t: t.completed()),
+    Filter(
+        "all",
+        "All",
+        "Nothing to do yet. Add something above.",
+        "No to-dos match",
+        lambda t: t,
+    ),
+    Filter(
+        "active",
+        "Active",
+        "Nothing left to do.",
+        "No active to-dos match",
+        lambda t: t.remaining(),
+    ),
+    Filter(
+        "completed",
+        "Completed",
+        "Nothing completed yet.",
+        "No completed to-dos match",
+        lambda t: t.completed(),
+    ),
 ]
 DEFAULT_FILTER = FILTERS[0]
 FILTER_BY_VALUE = {f.value: f for f in FILTERS}
+
+# The longest search: as long as the longest title, so any title can be pasted.
+SEARCH_MAX_LENGTH = Todo._meta.get_field("title").max_length
+
+
+def clean_search(text):
+    """The search word: no invisible characters, one space between words, at most 200 characters.
+
+    Invisible characters are control characters (like the "null" character)
+    and format characters (like a zero-width space). White space is kept for
+    the next step, which turns every kind of it (also the wide Japanese space)
+    into one normal space.
+    """
+    text = "".join(
+        ch
+        for ch in text
+        if ch.isspace() or unicodedata.category(ch) not in ("Cc", "Cf")
+    )
+    text = " ".join(text.split())
+    return text[:SEARCH_MAX_LENGTH].rstrip()
 
 
 def list_params(data):
@@ -59,6 +100,9 @@ def list_params(data):
     show = data.get("show")
     if show in FILTER_BY_VALUE and show != DEFAULT_FILTER.value:
         params["show"] = show
+    q = clean_search(data.get("q") or "")
+    if q:
+        params["q"] = q
     # `selected` is always the last key: later checks (search, sort) go above.
     selected = clean_id(data.get("selected"))
     if selected is not None:
@@ -79,6 +123,29 @@ def list_query(params):
 def filter_todos(todos, params):
     """Only the to-dos the filter asks for."""
     return chosen_filter(params).apply(todos)
+
+
+def search_words(q):
+    """The search word as typed, and its NFKC form if that is different.
+
+    NFKC turns wide letters into normal ones: "ｍｉｌｋ" becomes "milk".
+    """
+    words = [q]
+    plain = unicodedata.normalize("NFKC", q)
+    if plain != q:
+        words.append(plain)
+    return words
+
+
+def search_todos(todos, params):
+    """Only the to-dos whose title contains the search word, as typed or in its NFKC form."""
+    q = params.get("q")
+    if not q:
+        return todos
+    match = Q()
+    for word in search_words(q):
+        match |= Q(title__icontains=word)
+    return todos.filter(match)
 
 
 def filter_links(params):
@@ -136,10 +203,12 @@ def page_context(request, form):
     params = list_params(request.GET)
     todos = Todo.objects.all()
     todos = filter_todos(todos, params)
+    todos = search_todos(todos, params)
     # Everything that changes `todos` (search, sort, ...) goes above this line.
     selected = selected_todo(todos, params)
     if selected is None:
         params.pop("selected", None)  # then the page is exactly the page without it
+    without_q = {k: v for k, v in params.items() if k != "q"}
     return {
         "todos": todos,
         "form": form,
@@ -156,6 +225,11 @@ def page_context(request, form):
         "selected": selected,
         "select_base": select_base(params),
         "close_url": reverse("todo_list") + list_query(without_selected(params)),
+        "q": params.get("q", ""),
+        "no_match_start": chosen_filter(params).no_match_start,
+        "search_max_length": SEARCH_MAX_LENGTH,
+        "search_keeps": list(without_q.items()),
+        "clear_search_url": reverse("todo_list") + list_query(without_q),
     }
 
 

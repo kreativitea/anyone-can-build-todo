@@ -1,6 +1,7 @@
 # Plan: search the list
 
-Status: **approved.** No code has changed yet.
+Status: **approved, in progress.** Built without the work after the rebase; see "What happened"
+at the end.
 
 This is feature 10, the last one in wave 2 of [the rollout plan](feature-rollout.md). The merge
 order in wave 2 is: 6 priority → 21 details pane → 7 notes → 4 edit → **10 search** (search is
@@ -642,3 +643,77 @@ The CUJ test still passes after the change. We checked each step:
 - **Clashes when rebasing on 6, 21, 7 and 4.** All change `page_context` and the template. One key per
   line and one step per line keep the clash small.
 - **Speed.** `icontains` reads every row. For a list of hundreds of to-dos, that is still fast.
+
+## What happened
+
+Built on `main` with 5, 12, 11 and 8 in it, on the branch `feature/search`. Priority (6), the
+details pane (21), notes (7) and edit (4) are not on `main` yet, so **everything in "After 6, 21,
+7 and 4 are on `main`" is not done** (see the list at the end of this section).
+
+**`main` was the same as the plan said.** `list_params`, `list_query`, `FILTERS`, `filter_todos`,
+`filter_links`, `back_to_list`, `page_context` and `helpers.py` (`page_parts`) were all there as
+described. So nothing in the plan had to change because of `main`.
+
+**Tests first.** The plan file and the tests were committed first, then `make test` was run before
+any code change:
+
+- the 5 new `list_params` tests failed: `q` was dropped (`{} != {'q': 'milk'}`, and
+  `{'show': 'active'} != {'show': 'active', 'q': 'milk'}`);
+- `test_search_words.py` failed with `ImportError: cannot import name 'search_words'`;
+- the 15 new integration tests failed for the reasons in the table: `Call home` was shown, there
+  was no search form, no message, the filter links and the redirects had no `q`, and the `POST`
+  forms ended with `?show=active` or had no query;
+- the 3 protecting unit tests and the 3 protecting integration tests passed.
+
+That run: 103 tests, 51 failures and 1 error (the import).
+
+**The code.** `views.py`: `SEARCH_MAX_LENGTH`, `clean_search`, the `q` check in `list_params`,
+`search_words`, `search_todos`, the new `no_match_start` column in `FILTERS`, and the new line and
+keys in `page_context`. The template: the search form, the empty message, the CSS. No migration:
+`makemigrations --check` says "No changes detected".
+
+**Each deliberate bug**, put in for a moment and taken out again (`git diff` shows none of them):
+
+| Deliberate bug | Test | Result |
+|---|---|---|
+| `if q is not None:` in `list_params` | `test_list_params_drops_an_empty_search` | failed: `{'q': ''} != {}` |
+| no `.rstrip()` after the cut | `test_list_params_twice_is_the_same` | failed: a space at the end the first time only |
+| `list_query` with no encoding | `test_list_query_with_search` | failed: `'?q=buy milk' != '?q=buy+milk'`, `'?q=a&next=x' != '?q=a%26next%3Dx'` |
+| search **only** the NFKC form | `test_typed_wide_letters_find_a_wide_title` | failed: `ＭＩＬＫ tea` not found |
+| `search_todos` deletes what does not match | `test_search_changes_nothing` | failed: `Call home` was gone |
+| count and `has_todos` from the shown list | `test_count_and_footer_ignore_the_search` | failed: no `2 items left` (for `milk` and `banana`) |
+| `completed_ids` from the shown list | `test_delete_completed_ignores_the_search` | failed: no `Delete 2 completed to-dos` |
+| a raw `LIKE` with no escaping | `test_search_treats_wildcards_as_text` | failed: all three rows (`%` found `file_name`, `_` found `100% done`, `file_name` found `file-name`) |
+
+**Small differences from the plan:**
+
+1. `test_every_post_form_keeps_the_search` checks that the query part of every action (after the
+   `?`) is **exactly** the page's query, not only that the action "ends with" it. This is stricter.
+2. `test_delete_completed_ignores_the_search` checks the exact button and the exact hidden id
+   inputs, as the plan says, but not the whole footer: the footer form's address gets `?q=banana`
+   only after the change, and this protecting test must pass before it. The address is checked by
+   `test_every_post_form_keeps_the_search`.
+3. In `FILTERS`, the new column `no_match_start` is after `empty_message` and before `apply`. Each
+   row is now written one value per line, so the lines stay short.
+4. The small helpers `title(text)` and `search_box(value)` are in `test_search.py`, because only
+   this file uses them. `helpers.py` did not change: it already had `page_parts`.
+5. The old unit test `test_filter_links_keep_other_params` still uses its stub for `q`. It still
+   passes. It could use the real `list_params` now, but it was left as it is.
+6. Step 6 (trying it by hand with `make run`) was not done by the builder. The CUJ test passes,
+   unchanged.
+
+After the change: `make test` (unit 22, integration 82), `make test-cuj` (1) and `make check` all
+pass.
+
+**Not done yet: the work after the rebase on 6, 21, 7 and 4.**
+
+- Keep every `page_context` key and every part of the page from 6, 21, 7 and 4.
+- Search the notes too: `Q(title__icontains=word) | Q(notes__icontains=word)`; change the
+  docstring and the `AGENTS.md` row to "the title or the notes".
+- The tests `test_wide_letters_find_words_in_the_notes`, `test_search_finds_words_only_in_the_notes`,
+  `test_edit_link_keeps_the_search`, `test_edit_page_keeps_the_search` and
+  `test_search_form_keeps_the_selected_todo`, each with its deliberate bug.
+- The details-pane TODO: the `matched in notes` hint (and its test), and what happens to a
+  selected to-do that the search hides. Follow `details-pane.md`, or ask the orchestrator.
+- Change the title element in `test_search.py` to the one 21 uses (a `title_element` helper in
+  `helpers.py`).
