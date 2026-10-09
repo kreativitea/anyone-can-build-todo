@@ -2,6 +2,8 @@ from collections.abc import Callable
 from typing import NamedTuple
 from urllib.parse import urlencode
 
+from django.db import DatabaseError, transaction
+from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_http_methods, require_POST
@@ -191,7 +193,17 @@ def todo_edit(request, pk):
     if request.method == "POST":
         form = TodoEditForm(request.POST, instance=todo)
         if form.is_valid():
-            form.save()
+            edited = form.save(commit=False)
+            try:
+                # Only change a row that is there. A plain save() would make
+                # the to-do again if someone deleted it a moment ago. The
+                # atomic block keeps a failed save from breaking the rest of
+                # the request's database work.
+                with transaction.atomic():
+                    edited.save(force_update=True)
+            except DatabaseError:
+                raise Http404("This to-do was deleted.") from None
+            form.save_m2m()
             return back_to_list(request)
     else:
         form = TodoEditForm(instance=todo)

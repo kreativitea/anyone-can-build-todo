@@ -282,6 +282,13 @@ def todo_edit(request, pk):
 - `params` is read once, and used for both the form's address and the Cancel link.
 - The template gets `pk`, not `todo`, so it cannot show a title that was not saved.
 - `back_to_list` and `page_context` do not change. The edit page is not the list page.
+- **Changed after the code review:** `form.save()` became `form.save(commit=False)`, then
+  `save(force_update=True)` inside `transaction.atomic()`, then `form.save_m2m()`. A
+  `DatabaseError` (no row was updated) gives **404**. Why: if someone deletes the to-do after
+  `is_valid()` and before the save, a plain `save()` finds no row to update and **inserts the to-do
+  again**. `force_update=True` means "only update; never insert". The `atomic()` block (a
+  **savepoint**: a point the database can go back to) keeps the failed save from breaking the rest
+  of the request. `save_m2m()` saves many-to-many fields, so tags (14) still work. See Risks.
 
 ### 4. `todos/templates/base.html` — a new file, the page frame
 
@@ -312,6 +319,9 @@ Move the `<head>` and the shared CSS out of `todo_list.html`:
 - It lives in `todos/templates/`, not in `todos/templates/todos/`, because it is for every page.
   Django finds it as `"base.html"`.
 - Only CSS that **every** page needs goes here. The rest stays in each page's `{% block style %}`.
+- The tags in `<head>` (`lang="en"`, `charset`, `viewport`, the favicon link) are checked by an
+  integration test on both pages. The **CSS** that moved here has no test: it is checked by eye,
+  with screenshots at 375 pixels wide (see "What happened").
 
 ### 5. `todos/templates/todos/todo_list.html` — extend the frame, and the Edit link
 
@@ -369,6 +379,9 @@ narrow window (step 7 below).
 - The CSS puts each label above its box, so the page fits a phone. `select` and `textarea` are there
   for priority (a choice) and notes (long text). The notes box is open, with the visible label
   "Notes:" — this is what the notes plan asks for.
+- `{{ form.non_field_errors }}` shows errors that are about the whole form, not one field. Today
+  the form has no such check, so it always shows nothing, and no test covers it. It stays, so a
+  later form-wide check shows up with no template change; that feature must add its test.
 
 ### 7. `todos/models.py` — no change
 
@@ -402,6 +415,14 @@ This feature merges after 6 (priority) and 7 (notes). Before it joins the merge 
    `{% block style %}`. Move their new lines into the block too.
 4. **The CUJ test.** 6 and 7 may also change it. Keep every step: theirs and the edit step.
 5. Write the tests in "After the rebase" below, with the field names from the merged code.
+6. **A row-order test** (from the code review): on one row, the Edit link comes **right before**
+   the Done form, after the title, the due date and the priority label. Check the order of the
+   row's parts exactly (for example with `page_parts`), and see it fail by moving the link for a
+   moment.
+7. **The details pane (21)** makes each title a link, next to "Edit <title>". So every CUJ step
+   that finds a link by its name must use `exact=True` (for example
+   `get_by_role("link", name="Edit Buy milk", exact=True)`). Keep the Edit link on the row: the
+   pane will **also** get an Edit link later.
 
 ## Tests (`todos/tests/`)
 
@@ -444,7 +465,7 @@ with its own error, instead of the whole file failing at once.
 | Test | What it checks | How it fails today |
 |---|---|---|
 | `test_edit_form_has_every_field_a_person_can_change` | the fields of `TodoEditForm()` are exactly the model fields that are `editable` and not made by Django (`auto_created`), minus `done`. Today: `{"title", "due_date"}` | `AttributeError`: there is no `TodoEditForm` |
-| `test_edit_form_does_not_change_the_add_form` | make a `TodoEditForm()` first. Then make a `TodoForm()`, and check the `widget.attrs` of **every** field exactly: title `{"aria-label": "New to-do", "placeholder": "What needs doing?", "autofocus": True, "maxlength": "200"}`, due date `{"type": "date"}` | `AttributeError`: there is no `TodoEditForm` |
+| `test_edit_form_does_not_change_the_add_form` | make a `TodoEditForm()` first. Then make a `TodoForm()`, and check the `widget.attrs` of **every** field exactly: title `{"aria-label": "New to-do", "placeholder": "What needs doing?", "autofocus": True, "maxlength": "200"}`, due date `{}` (Django moves `type` out of `attrs`), and the date box's `widget.input_type == "date"` | `AttributeError`: there is no `TodoEditForm` |
 | `test_date_box_shows_iso_date_in_every_language` | inside `translation.override("en-gb")` (which switches Django to British English for a moment), `TodoForm(instance=Todo(title="Buy milk", due_date=date(2026, 10, 12)))["due_date"]` is exactly `<input type="date" name="due_date" value="2026-10-12" id="id_due_date">` | `AssertionError`: the value is `12/10/2026` |
 
 The first test reads the fields from the model, so it never needs a change for 6 and 7. A later
@@ -552,6 +573,12 @@ Added to `test_edit.py` after the rebase, with the field names and values from t
   presses Save, the Done can be lost (see Decisions). We accept it, because `update_fields` would
   break when tags (14) join the form. If it matters later, save with `update_fields` for the plain
   columns only.
+- **A to-do deleted while it is being saved (fixed).** The code review found a real bug: if someone
+  deletes the to-do after the form is checked and before it is saved, a plain `form.save()` puts
+  the to-do **back** (Django's save updates, and when no row is updated, it inserts). Now the view
+  saves with `force_update=True` inside `transaction.atomic()`, and gives 404 when no row was
+  updated. The test `test_todo_deleted_while_saving_is_not_brought_back` deletes the row between
+  the check and the save.
 - **The CUJ test gets longer.** If the edit page breaks, the one journey stops at the edit step, and
   the Done / Undo / Delete steps do not run until it is fixed. The integration tests still say
   exactly what broke.
@@ -620,3 +647,42 @@ does not scroll sideways. The edit page shows "Title:" above the title box and "
 (optional):" above the date box, each box the full width, then Save and Cancel. An empty title
 shows "This field is required." in red above the box. From Active, Edit opens
 `/1/edit/?show=active`, and Cancel goes back to `/?show=active`.
+
+### After the code review
+
+An adversarial code reviewer found no blockers, but 14 of its 29 deliberate bugs were not caught by
+any test. These changes were made as new commits. Each new test was first seen failing against its
+bug.
+
+1. **Hostile list parameters on the edit page.** `test_hostile_params_never_reach_an_address`
+   opens `/<id>/edit/?show=//evil.example&next=https://evil.example`: the form's `action` is
+   exactly `/<id>/edit/`, Cancel is exactly `<a href="/">Cancel</a>`, and a good post goes to `/`.
+   It failed against three bugs: `list_query` or the Cancel address built from
+   `request.GET.urlencode()`, and a redirect to `request.GET["next"]`.
+2. **The unsaved title.** `test_bad_edit_never_shows_the_unsaved_title`: after a good title with a
+   bad date, the page has `<title>Edit to-do</title>` and `<h1>Edit to-do</h1>`, and "Buy oat milk"
+   is on the page exactly once (in the box). It failed when the heading or the page title showed
+   `{{ form.instance.title }}`.
+3. **The shared `<head>`.** `test_every_page_has_the_shared_head` checks `<meta charset="utf-8">`,
+   the viewport `<meta>`, the favicon `<link>` and `<html lang="en">` on the list page and the edit
+   page. `page_parts` in `helpers.py` now also reads `html_lang`. It failed when each of the four
+   was taken out of `base.html`. The CSS in `base.html` has no test; it is checked by eye.
+4. **CSRF.** `test_edit_needs_the_csrf_token` (no token: 403, nothing changes) failed when
+   `todo_edit` was `@csrf_exempt`. `test_the_edit_form_works_with_csrf_checks_on` (reads the token
+   from the page, then posts: 302) failed when `{% csrf_token %}` was taken out of the edit form.
+5. **A real bug: a deleted to-do came back.** `test_todo_deleted_while_saving_is_not_brought_back`
+   deletes the row between `is_valid()` and the save. Before the fix it failed with `302 != 404`:
+   the save had made the to-do again. The fix is in `views.py` (see "3. `todos/views.py`" and
+   Risks). The first try, without `transaction.atomic()`, broke the request's database work
+   (`TransactionManagementError`), so the save is inside a savepoint.
+6. **The CSS** in `base.html` is checked by eye, with no test (written in section 4).
+7. **The row order** (Edit right before Done) gets a test after the rebase (step 6 in "After 6 and
+   7 are on `main`"). So does `exact=True` in the CUJ link names, for the details pane (step 7).
+8. **`{{ form.non_field_errors }}`** stays. It is unused until a form-wide check exists (written in
+   section 6).
+9. **The unit-test table** now says the date box's `attrs` are `{}`, plus `input_type == "date"`.
+
+Results: before the fix, `test_edit.py` had 19 tests and only the new deleted-row test failed. The
+other new tests passed, and each one failed against its deliberate bug; every bug was taken out
+again. After the fix: `make check` passes (Integration 83, Unit 15, CUJ 1), `make test-cuj`
+passes, and `makemigrations --check` says "No changes detected".
