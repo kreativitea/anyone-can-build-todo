@@ -24,6 +24,7 @@ from todos.tests.integration.helpers import (
     make_user,
     page_forms,
     page_parts,
+    page_path,
     page_without_csrf,
     tag_list,
     title_element,
@@ -356,3 +357,32 @@ class JourneyTests(TestCase):
         # "Show all tags": both to-dos again.
         page = self.client.get(link_href(page, "Show all tags"))
         self.assertEqual(page_parts(page).titles, ["Write report", "Buy milk"])
+
+    def test_put_my_todos_in_order(self):
+        # Reorder (16). Add three to-dos, choose "My order", move them with
+        # the buttons. (No real browser, owner decision: pressing Enter on a
+        # focused button sends the same form as a click.)
+        make_user("ana")
+        page = log_in(self.client, "ana")
+        for title in ["One", "Two", "Three"]:
+            page = self.press(page, "Add", title=title)
+        self.assertEqual(page_parts(page).titles, ["One", "Two", "Three"])
+
+        my_order = self.my_list_url() + "?sort=manual"
+        page = self.client.get(link_href(page, "My order"))
+        self.assertEqual(page_path(page), my_order)
+
+        three = Todo.objects.get(title="Three")
+        page = self.press(page, "Move Three up", lands_on=f"{my_order}#todo-{three.pk}")
+        self.assertEqual(page_parts(page).titles, ["One", "Three", "Two"])
+
+        one = Todo.objects.get(title="One")
+        page = self.press(page, "Move One down", lands_on=f"{my_order}#todo-{one.pk}")
+        self.assertEqual(page_parts(page).titles, ["Three", "One", "Two"])
+
+        # The order is saved: it is the same after a reload.
+        page = self.client.get(my_order)
+        self.assertEqual(page_parts(page).titles, ["Three", "One", "Two"])
+        # "Date added" (the default) still shows the order they were added.
+        page = self.client.get(link_href(page, "Date added"))
+        self.assertEqual(page_parts(page).titles, ["One", "Two", "Three"])

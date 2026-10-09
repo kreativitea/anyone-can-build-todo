@@ -34,6 +34,7 @@ LINKS = [
     ("due", "Due date"),
     ("priority", "Priority"),
     ("title", "Title"),
+    ("manual", "My order"),  # reorder (16): the last link
 ]
 CURRENT = ' aria-current="true"'
 
@@ -326,6 +327,16 @@ class SortTests(LoggedInTestCase):
                     ("d done", {"done": True}),
                 ],
                 ["B open", "c open", "A done", "d done"],
+            ),
+            # Reorder (16): My order, by the number each to-do has.
+            "manual": (
+                [
+                    ("Done first", {"done": True, "position": 1}),
+                    ("Open late", {"position": 5}),
+                    ("Open early", {"position": 2}),
+                    ("Done later", {"done": True, "position": 3}),
+                ],
+                ["Open early", "Open late", "Done first", "Done later"],
             ),
         }
         # Every sort in the table has a case here.

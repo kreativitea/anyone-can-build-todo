@@ -117,6 +117,9 @@ DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
         "NAME": BASE_DIR / "db.sqlite3",
+        # A transaction takes the write lock at its start (reorder, 16). The
+        # second writer waits instead of failing with "database is locked".
+        "OPTIONS": {"transaction_mode": "IMMEDIATE"},
     }
 }
 

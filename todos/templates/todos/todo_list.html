@@ -35,6 +35,19 @@
     li .priority.high { font-weight: bold; color: #8b0000; background: #fde8e8; border: 1px solid #8b0000; }
     li .priority.low { color: #555; border: 1px solid #bbb; }
     li.done .priority { opacity: 0.6; }
+    /* Move up / Move down (My order): two buttons side by side, apart from Delete. */
+    form.move { display: flex; gap: 0.5rem; margin-left: 0.5rem; }
+    form.move button { min-width: 24px; min-height: 24px; padding: 0 0.4rem; }
+    .move-status { margin: 0 0 0.5rem; color: #555; font-size: 0.9rem; }
+    /* Touch screens: a finger needs 2.75rem (44 px). On a narrow phone the
+       title then takes its own line, and the buttons go under it. */
+    @media (pointer: coarse) {
+      form.move button { min-width: 2.75rem; min-height: 2.75rem; }
+    }
+    @media (pointer: coarse) and (max-width: 30rem) {
+      li:has(form.move) { flex-wrap: wrap; }
+      li:has(form.move) .title { flex-basis: 100%; }
+    }
     .list-footer { color: #666; font-size: 0.9rem; }
     /* Tags (14): small links, on their own line in the title block (like the steps line). */
     form.add .tags-box { flex: 1 1 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
@@ -135,6 +148,8 @@
 
       {% if current_tag %}<p class="current-tag">Tagged <strong>{{ current_tag }}</strong> · <a href="{{ clear_tag_url }}">Show all tags</a></p>{% endif %}
 
+      {# After a move: a screen reader says it; the focus is on the row's button. #}
+      {% if move_status %}<p class="move-status" role="status">{{ move_status }}</p>{% endif %}
       <ul>
         {% for todo in todos %}
           <li id="todo-{{ todo.pk }}" class="{% if todo.done %}done{% endif %}{% if todo == selected %} selected{% endif %}">
@@ -152,6 +167,15 @@
               {% csrf_token %}
               <button type="submit">Delete</button>
             </form>
+            {% if can_move %}
+              {# Only in My order. The aria-label says which to-do, like the Edit link. #}
+              <form class="move" method="post" action="{% url 'todo_move' todo.pk %}{{ list_query }}">
+                {% csrf_token %}
+                {# Right after a move, the pressed button (or the other one, if it is now disabled) has the focus. #}
+                <button type="submit" name="direction" value="up" aria-label="Move {{ todo.title }} up" title="Move up"{% if todo.pk in no_up_ids %} disabled{% endif %}{% if move_focus.pk == todo.pk and move_focus.direction == "up" %} autofocus{% endif %}>↑</button>
+                <button type="submit" name="direction" value="down" aria-label="Move {{ todo.title }} down" title="Move down"{% if todo.pk in no_down_ids %} disabled{% endif %}{% if move_focus.pk == todo.pk and move_focus.direction == "down" %} autofocus{% endif %}>↓</button>
+              </form>
+            {% endif %}
           </li>
         {% empty %}
           <li>{% if q %}{{ no_match_start }} "{{ q }}".{% elif current_tag %}No to-dos tagged "{{ current_tag }}".{% else %}{{ empty_message }}{% endif %}</li>

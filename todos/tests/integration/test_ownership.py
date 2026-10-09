@@ -55,6 +55,8 @@ MATRIX = [
     ("todo_toggle", "post", {"done": "1"}),
     ("todo_toggle", "post", {"done": "0"}),
     ("todo_delete", "post", {}),
+    ("todo_move", "post", {"direction": "up"}),
+    ("todo_move", "post", {"direction": "down"}),
     ("todo_edit", "get", {}),
     (
         "todo_edit",
@@ -368,6 +370,8 @@ class CanaryTests(LoggedInTestCase):
         # Tags (14): a tag both have, part of his tag, and his to-do selected.
         queries += [{"tag": tag} for tag in ["home", "7f3a9c", "tag"]]
         queries += [{"tag": "home", "selected": self.bens.pk}]
+        # Reorder (16): My order (with the Move buttons) on a tag both have.
+        queries += [{"sort": "manual", "tag": "home"}]
         return queries
 
     def assert_no_canary(self, response):

@@ -16,6 +16,7 @@ from django.views.decorators.http import require_http_methods, require_POST
 
 from .forms import SubtaskForm, TodoEditForm, TodoForm, TodoListForm
 from .models import TAG_MAX_LENGTH, Todo, TodoList, clean_tag_name
+from .ordering import DIRECTIONS, DOWN, UP, move, move_limits
 
 # Django refuses a form with more than 1,000 fields, and then nothing is
 # deleted. So the delete-completed button offers at most this many, oldest
@@ -80,6 +81,9 @@ FILTER_BY_VALUE = {f.value: f for f in FILTERS}
 # Every order ends with created_at, then pk, so ties never jump. nulls_last
 # puts "no due date" last.
 DUE_SOONEST_FIRST = F("due_date").asc(nulls_last=True)
+# "My order" (reorder, 16): by position, the empty ones last. Like
+# TodoQuerySet.in_my_order, with the completed to-dos last.
+MY_ORDER = F("position").asc(nulls_last=True)
 SORTS = [
     ("created", "Date added", ("done", "created_at", "pk")),
     ("due", "Due date", ("done", DUE_SOONEST_FIRST, "-priority", "created_at", "pk")),
@@ -89,8 +93,12 @@ SORTS = [
         ("done", "-priority", DUE_SOONEST_FIRST, "created_at", "pk"),
     ),
     ("title", "Title", ("done", Lower("title"), "created_at", "pk")),
+    # The last link (owner decision: "Date added" stays the default).
+    ("manual", "My order", ("done", MY_ORDER, "created_at", "pk")),
 ]
 DEFAULT_SORT = SORTS[0][0]
+# The sort that shows the Move up / Move down buttons.
+MANUAL_SORT = "manual"
 SORT_ORDERS = {value: order for value, _label, order in SORTS}
 
 # The longest search, in characters (code points): the title's max_length,
@@ -302,6 +310,60 @@ def get_owned_list(request, list_id):
     return get_object_or_404(TodoList.objects.owned_by(request.user), pk=list_id)
 
 
+def list_todos(request, current_list):
+    """Every to-do of the open list. Every query starts with for_user, then the list."""
+    return Todo.objects.for_user(request.user).filter(todo_list=current_list)
+
+
+def shown_todos(request, current_list, params):
+    """The to-dos the page shows, before the sort: the filter, the search and the tag.
+
+    The list page and the Move buttons both use this, so they never disagree
+    about which rows are on the page.
+    """
+    todos = list_todos(request, current_list)
+    todos = filter_todos(todos, params)
+    todos = search_todos(todos, params)
+    return tag_todos(todos, params)
+
+
+# The session key of the last move: {"pk", "direction", "moved"}.
+MOVED_SESSION_KEY = "todos_last_move"
+
+
+def after_move(last_move, todos, no_up, no_down):
+    """The button to focus, and the message, right after a move.
+
+    `last_move` comes from the session (todo_move wrote it), so it is checked
+    again: a dict with an int `pk` that is on this page and a known direction.
+    Returns ({"pk", "direction"} or None, the message or "").
+    The focus goes to the same button; if it is now disabled (the row reached
+    the top or the bottom), to the other one. The message, like "Moved Buy
+    milk up (2 of 5)", only when the to-do really moved; the numbers are its
+    row on this page and the number of rows.
+    """
+    if not isinstance(last_move, dict):
+        return None, ""
+    pk, direction = last_move.get("pk"), last_move.get("direction")
+    if not isinstance(pk, int) or direction not in DIRECTIONS:
+        return None, ""
+    rows = list(todos)  # the page's rows, already read by move_limits
+    index = next((i for i, todo in enumerate(rows) if todo.pk == pk), None)
+    if index is None:
+        return None, ""
+    disabled = {UP: no_up, DOWN: no_down}
+    other = DOWN if direction == UP else UP
+    focus = None
+    for choice in (direction, other):
+        if pk not in disabled[choice]:
+            focus = {"pk": pk, "direction": choice}
+            break
+    status = ""
+    if last_move.get("moved") is True:
+        status = f"Moved {rows[index].title} {direction} ({index + 1} of {len(rows)})"
+    return focus, status
+
+
 def page_context(request, form, current_list):
     """What the list page needs. Both views use this, so a new key goes here once.
 
@@ -310,17 +372,27 @@ def page_context(request, form, current_list):
     """
     params = list_params(request.GET)
     list_id = current_list.pk
-    mine = Todo.objects.for_user(request.user).filter(todo_list=current_list)
+    mine = list_todos(request, current_list)
     # Each to-do comes with its step counts, in the same query (no N+1).
-    todos = mine.with_subtask_progress()
-    todos = filter_todos(todos, params)
-    todos = search_todos(todos, params)
+    todos = shown_todos(request, current_list, params).with_subtask_progress()
     todos = sort_todos(todos, params)
-    todos = tag_todos(todos, params)
     # The tags of every row in ONE more query; the rows read them from memory.
     todos = todos.prefetch_related("tags")
     # Everything that changes `todos` (search, sort, tags, ...) goes above this line.
     selected = selected_todo(todos, params)
+    can_move = params.get("sort") == MANUAL_SORT
+    # Reads the rows once; the template uses the same rows (no extra query).
+    no_up, no_down = move_limits(todos) if can_move else (set(), set())
+    # Read once, on any list page: an old note never comes back later.
+    last_move = request.session.pop(MOVED_SESSION_KEY, None)
+    move_focus, move_status = (
+        after_move(last_move, todos, no_up, no_down) if can_move else (None, "")
+    )
+    if move_focus is not None:
+        # A browser focuses the FIRST element with autofocus: the add box
+        # gives it up, so the focus stays on the row that moved. (The form's
+        # widgets are copies: this changes only this page.)
+        form.fields["title"].widget.attrs.pop("autofocus", None)
     if selected is None:
         params.pop("selected", None)  # then the page is exactly the page without it
     without_q = {k: v for k, v in params.items() if k != "q"}
@@ -356,6 +428,11 @@ def page_context(request, form, current_list):
         + list_query(without_q),
         "current_list": current_list,
         "lists": TodoList.objects.for_user(request.user),
+        "can_move": can_move,
+        "no_up_ids": no_up,
+        "no_down_ids": no_down,
+        "move_focus": move_focus,
+        "move_status": move_status,
     }
 
 
@@ -414,6 +491,32 @@ def todo_toggle(request, pk):
         return HttpResponseBadRequest("done must be 1 or 0")
     todo.set_done(target)
     return back_to_list(request, todo.todo_list_id)
+
+
+@require_POST
+def todo_move(request, pk):
+    """Move up (direction=up) or Move down (direction=down) in My order.
+
+    The neighbour is the next row the page shows: the same filter and search
+    as the page (the list query). Anything else is a bad request: 400.
+    """
+    todo = get_object_or_404(Todo.objects.for_user(request.user), pk=pk)
+    direction = request.POST.get("direction")
+    if direction not in DIRECTIONS:
+        return HttpResponseBadRequest("direction must be up or down")
+    current_list = get_list(request, todo.todo_list_id)
+    params = list_params(request.GET)
+    moved = move(todo, shown_todos(request, current_list, params), direction)
+    # The next list page puts the focus back on this button and says what
+    # happened (after_move). Kept in the session, read once.
+    request.session[MOVED_SESSION_KEY] = {
+        "pk": todo.pk,
+        "direction": direction,
+        "moved": moved,
+    }
+    # Back to the moved row: the browser scrolls to it. The fragment is
+    # built from the integer pk, never from the request.
+    return redirect(list_url(request, current_list.pk) + f"#todo-{todo.pk}")
 
 
 @require_http_methods(["GET", "HEAD", "POST"])

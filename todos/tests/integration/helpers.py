@@ -566,6 +566,66 @@ def toggle_form(todo, done=False, query=""):
     )
 
 
+def move_form(todo, query="", up=True, down=True, focus=None):
+    """A row's Move up / Move down form (reorder, 16), exactly, without the CSRF token.
+
+    `up=False` (the first row) or `down=False` (the last row) draws that
+    button `disabled`. `query` is the list query, like "?sort=manual".
+    `focus` ("up" or "down") is the button with `autofocus`, right after a move.
+    """
+    title = escape(todo.title)
+
+    def extra(direction, enabled):
+        disabled = "" if enabled else " disabled"
+        return disabled + (" autofocus" if focus == direction else "")
+
+    return (
+        f'<form class="move" method="post" action="/{todo.pk}/move/{escape(query)}">'
+        f'<button type="submit" name="direction" value="up" aria-label="Move {title} up" '
+        f'title="Move up"{extra("up", up)}>↑</button>'
+        f'<button type="submit" name="direction" value="down" aria-label="Move {title} down" '
+        f'title="Move down"{extra("down", down)}>↓</button>'
+        "</form>"
+    )
+
+
+class AutofocusTags(HTMLParser):
+    """Every element with `autofocus`: (its tag, its aria-label), in order."""
+
+    def __init__(self, html):
+        super().__init__()
+        self.found = []
+        self.feed(html)
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if "autofocus" in attrs:
+            self.found.append((tag, attrs.get("aria-label")))
+
+
+def autofocus_tags(response):
+    """Every element on the page with `autofocus`. A browser focuses the first."""
+    return AutofocusTags(response.content.decode()).found
+
+
+def move_status(text):
+    """The message after a move, like "Moved Buy milk up (2 of 5)", exactly."""
+    return f'<p class="move-status" role="status">{escape(text)}</p>'
+
+
+def row_html(response, todo):
+    """The HTML of the one <li> of `todo`, without the CSRF tokens.
+
+    A row has no <li> inside it, so it ends at the first </li>. A check
+    inside one row is exact; a check on the whole page is not.
+    """
+    pattern = re.compile(rf'<li id="todo-{todo.pk}"[^>]*>.*?</li>', re.DOTALL)
+    found = pattern.findall(page_without_csrf(response))
+    if len(found) != 1:
+        raise AssertionError(f"{len(found)} rows for to-do {todo.pk}, not 1")
+    return found[0]
+
+
 def pane_element(
     todo,
     *,

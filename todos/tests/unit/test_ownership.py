@@ -105,6 +105,13 @@ UNSCOPED = [
     # A model looked up by name skips every check above (only data migrations may).
     re.compile(r"\bget_model\("),
     re.compile(r"\.model\.objects\b"),
+    # Reorder (16) review: the model reached through an object, like
+    # type(todo).objects or todo._meta.model._default_manager.
+    re.compile(
+        r"\b(type\(\s*\w+\s*\)|\w+\.__class__|_meta\.model|\.model)"
+        r"\.(objects|_default_manager|_base_manager)\b"
+    ),
+    re.compile(r"\b_meta\.(default_manager|base_manager)\b"),
 ]
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -136,6 +143,15 @@ ALLOWED = {
     (
         "todos/data_migrations.py",
         "Todo.objects.filter(todo_list__isnull=True).delete()",
+    ),
+    # Reorder (16): numbers every to-do once, per list (the historical model).
+    (
+        "todos/data_migrations.py",
+        'for todo in Todo.objects.order_by("todo_list_id", "created_at", "pk"):',
+    ),
+    (
+        "todos/data_migrations.py",
+        'Todo.objects.bulk_update(changed, ["position"], batch_size=500)',
     ),
     # The admin: staff see every to-do on purpose.
     ("todos/admin.py", "model = Subtask"),
@@ -170,6 +186,13 @@ class OwnerGuardTests(SimpleTestCase):
     """A text search of every .py file in todos/ and config/ (not tests or
     migrations). The 404 matrix and the canary are the real checks
     (integration/test_ownership.py); this one catches the common mistake early.
+
+    A regular expression reads one line of text. It cannot catch: a model in
+    a variable (`m = Todo` then `m.objects`), `getattr(Todo, "objects")`,
+    `apps.get_model(...)`, a manager passed in from somewhere else, a query
+    split over several lines, raw SQL, or a related manager reached from
+    another person's object (`their_list.todos`). Those need the tests: the
+    404 matrix, the canary, and each feature's own "another person" tests.
     """
 
     maxDiff = None  # show every line the guard found
@@ -228,6 +251,13 @@ class OwnerGuardTests(SimpleTestCase):
             "todos = todos.filter(tags__name=tag)",
             'todos.filter(tags__name=name).filter(tags__owner=F("todo_list__owner"))',
             "todos.filter(Q(tags__name__in=names))",
+            # Reorder (16) review: the model reached through an object.
+            "siblings = type(todo)._default_manager.all()",
+            "rows = type( todo ).objects.filter(todo_list=other)",
+            "rows = self.__class__.objects.all()",
+            "rows = todo._meta.model._base_manager.all()",
+            "rows = todo._meta.default_manager.all()",
+            "rows = Todo._meta.base_manager.all()",
         ]:
             with self.subTest(line=line):
                 self.assertTrue(any(p.search(line) for p in UNSCOPED))
