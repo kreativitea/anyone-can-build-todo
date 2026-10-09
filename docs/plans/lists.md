@@ -205,6 +205,8 @@ There is **no separate "all my lists" page**: the `<nav>` on every list page is 
 - **Two requests at the same moment** with the same new name can both pass `clean_name`; then the
   database refuses the second one with `IntegrityError`, and the person sees an error page (500).
   This needs two clicks in the same millisecond by the same person. **We accept it.**
+  (Changed after the security review: the view catches it and shows the form again with the same
+  message. See "What happened".)
 - After making a list: go to the new list. After renaming: back to that list.
 
 ### Delete a list: the list **and its to-dos** (owner decision)
@@ -755,9 +757,16 @@ old `<h1>` text, update that one assertion and say so in the PR.
   If the owner announces a launch before this merges, stop and plan a back-fill instead.
 - **Sharing (20) expects a lists index page.** There is none; the lists `<nav>` is the index (see
   Decisions).
-- **Two requests with the same new list name at the same moment** → one 500 error page. Accepted.
-- **Case-insensitive names** only cover A–Z in SQLite (`Lower` and `iexact` are ASCII-only there).
-  "Ärger" and "ärger" count as different. Acceptable.
+- **Two requests at the same moment** (fixed after the security review): the same new or
+  renamed list name in two requests → the database refuses the second; the view catches the
+  `IntegrityError` and shows the form again with `You already have a list called "…".` Adding a
+  to-do to a list that another tab deleted a moment ago → 404, nothing saved. Tested with a
+  `TransactionTestCase` (`test_lists_races.py`). Still not handled: a to-do added between opening
+  "Rename or delete" and pressing the button is deleted too, though the number did not count it.
+- **Names are compared after NFKC + casefold** (orchestrator decision after the review, like
+  search): "Work", "work", "ＷＯＲＫ" and "ｗｏｒｋ" are the same name, and so are "Ärger" and
+  "ärger" (the old `Lower`/`iexact` only knew A–Z in SQLite). The key is stored (`name_key`), so
+  the form and the database use the same rule.
 - **Names from earlier plans.** If 15, 17 or 19 merged with other names, the builder adapts the
   names and keeps the rules: one entry point for lists, to-dos (and so their subtasks) visible through their
   list, the owner always the list owner.
@@ -870,7 +879,8 @@ uv run python manage.py makemigrations todos --empty -n delete_todos_without_lis
 uv run python manage.py makemigrations todos -n todo_list_required --noinput
 ```
 
-Step 3 must be a single `AlterField` with no `default`. The `-n` names stay, so
+Step 1 makes the `TodoList` table (with `name_key` and the `(owner, name_key)` constraint) and
+the nullable `todo_list`. Step 3 must be a single `AlterField` with no `default`. The `-n` names stay, so
 `test_lists_migration.py` finds them by their name ending.
 
 ### Checked by eye (headless Chrome, 1280 × 800)
@@ -889,11 +899,53 @@ database deleted.
 - **Rename or delete** (`lists-rename-delete-1280.png`): "Rename or delete Work", the box with
   "Work", Save and Cancel, a thin line, then the button "Delete list and its 3 to-dos".
 
+### After the security review
+
+Nothing leaked or changed across users. The findings, fixed in two commits (the tests first,
+red: `lists-review-red-test.txt`; then the fixes: `lists-review-green-test.txt`):
+
+1. **Admin:** changing a list's owner would leave its to-dos with the old owner. `TodoListAdmin
+   .get_readonly_fields`: `owner` is read-only once the list exists (unit and admin-page tests).
+2. **The delete button counts completed to-dos too** (1 open + 2 done → "Delete list and its 3
+   to-dos"). It passed at once; shown failing against `remaining().count()`.
+3. **Unique names after NFKC + casefold** (orchestrator decision). `TodoList.name_key`
+   (`list_name_key(name)`, set by `save()`; a `TextField`, because NFKC can make a name longer);
+   the constraint `todolist_unique_name_per_owner` is now on `(owner, name_key)`;
+   `TodoListForm.clean_name` checks `name_key`; `validate_constraints()` checks it even where a
+   form leaves `name_key` out (the admin). Tests: "Work" / "ＷＯＲＫ" / "ｗｏｒｋ", "Ä" / "ä",
+   "Straße" → "strasse", in the form and in the database. The three migrations were made again
+   by the recipe below (deleted, then the three commands), not edited by hand.
+4. **Races** (see Risks): `save_list(form)` catches the `IntegrityError` in `list_create` and
+   `list_edit`; `todo_add` turns it into 404. `test_lists_races.py` (a `TransactionTestCase`; a
+   mock puts the other request's change at the worst moment). Red first: the error reached the
+   test.
+5. **HEAD** works on "New list" and "Rename or delete" (it was 405).
+6. **No control characters** in a list name (`validate_list_name` on the model field: `Cc`, `Zl`,
+   `Zp`; the emoji joiner stays). Message: "A list name cannot have line breaks or other control
+   characters." A migration imports it: never change it, write a new one.
+7. **An empty POST** to "New list" or "Rename" shows "This field is required." The forms are bound
+   on POST (`posted(request)`), not `request.POST or None` (an empty POST was an unbound form).
+8. **The guard** also catches `model = TodoList` (only `forms.py`'s `Meta` line is allowed) and
+   `get_model(` (only the data migrations' lines are allowed). Shown failing against a generic
+   view on `TodoList` and an `apps.get_model` lookup in `views.py`.
+9. **The canary** posts ben's list id to ana's edit page and checks the error page. Shown failing
+   when the edit form offers every list.
+10. **The delete button looks dangerous** (red text and border, filled red on hover and focus;
+    checked by eye in `lists-rename-delete-1280.png`). **"New list" remembers where it came
+    from:** the link is `/lists/new/?from=<id>`; Cancel goes back to that list if the person may
+    use it (`came_from_list`: `clean_id`, then `TodoList.objects.for_user`), else `/`; the form
+    posts to the same address, so Cancel still knows after an error. Shown failing when `?from=`
+    is trusted for another person's list.
+
+All the deliberate bugs: `lists-review-deliberate-bugs.txt`. The migration checks were run again
+on the new files (same results as above). After: Integration 339, Unit 144, CUJ 7 passed;
+`make check` passed.
+
 ### For tags (14) and reorder (16), building on this branch
 
 `Todo.todo_list` (FK, `related_name="todos"`), `TodoList` (`owner`, `name`, `created_at`),
 `TodoList.objects.for_user(user)` / `.owned_by(user)` / `.create_default(user)`,
-`DEFAULT_LIST_NAME`, `get_list(request, list_id)` and `get_owned_list(request, list_id)` in
+`DEFAULT_LIST_NAME`, `TodoList.name_key` / `list_name_key(name)`, `get_list(request, list_id)` and `get_owned_list(request, list_id)` in
 `views.py`, `back_to_list(request, list_id)`, `list_url(request, list_id)`,
 `page_context(request, form, current_list)`, `filter_links(params, list_id)`,
 `sort_links(params, list_id)`, `select_base(params, list_id)`. URL names: `home`, `list_create`,
