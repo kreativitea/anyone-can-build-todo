@@ -1,5 +1,6 @@
 from datetime import timedelta
 
+from django.core.exceptions import ValidationError
 from django.test import TestCase
 from django.utils import timezone
 
@@ -58,3 +59,16 @@ class TodoModelTests(TestCase):
         high = Todo.objects.create(title="High", priority=Todo.Priority.HIGH)
         medium = Todo.objects.create(title="Medium", priority=Todo.Priority.MEDIUM)
         self.assertEqual(list(Todo.objects.order_by("-priority")), [high, medium, low])
+
+    # Notes: new behaviour.
+
+    def test_new_todo_has_empty_notes(self):
+        self.assertEqual(Todo.objects.create(title="Buy milk").notes, "")
+
+    def test_full_clean_checks_the_notes_limit(self):
+        with self.subTest(notes="500 characters"):
+            Todo(title="Buy milk", notes="a" * 500).full_clean()
+        with self.subTest(notes="501 characters"):
+            with self.assertRaises(ValidationError) as caught:
+                Todo(title="Buy milk", notes="a" * 501).full_clean()
+            self.assertIn("notes", caught.exception.message_dict)

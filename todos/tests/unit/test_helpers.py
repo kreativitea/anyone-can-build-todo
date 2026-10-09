@@ -161,3 +161,28 @@ class ActionTests(SimpleTestCase):
             page_path="/?show=active",
         )
         self.assertEqual(parts.post_actions, ["/add/", "/?show=active"])
+
+
+class PaneNotesTests(SimpleTestCase):
+    """`PageParts.pane_notes` and `pane_tags`: what the notes tests trust."""
+
+    def test_notes_with_line_breaks_and_codes(self):
+        parts = PageParts(
+            '<aside aria-label="Details"><dl><dt>Notes</dt>'
+            '<dd class="notes">&lt;b&gt; &amp; x<br>Or soy</dd></dl></aside>'
+        )
+        self.assertEqual(parts.pane_notes, "<b> & x\nOr soy")
+        self.assertEqual(parts.pane_tags, ["dl", "dt", "dd", "br"])
+
+    def test_no_pane_and_no_notes_row(self):
+        for html, tags in [
+            ("<p>No pane</p>", []),
+            (
+                '<aside aria-label="Details"><dl><dt>Due</dt><dd>-</dd></dl></aside>',
+                ["dl", "dt", "dd"],
+            ),
+        ]:
+            with self.subTest(html=html):
+                parts = PageParts(html)
+                self.assertIsNone(parts.pane_notes)
+                self.assertEqual(parts.pane_tags, tags)

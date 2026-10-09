@@ -263,6 +263,11 @@ class PageParts(HTMLParser):
     `selected_titles` is the text of every title link with aria-current="true":
     the selected to-do. Sort links use "true" too, but they are not titles.
     `panes` is the aria-label of every <aside>, in order. [] means "no pane".
+    `pane_notes` is the text of the pane's <dd class="notes">, with each <br>
+    as "\\n" and HTML codes turned back into characters ("&lt;" is "<").
+    None means there is no notes row.
+    `pane_tags` is the name of every element inside the pane <aside>, in
+    order, like ["h2", "dl", "dt", ...]. [] means "no pane".
     """
 
     def __init__(self, html, page_path=""):
@@ -276,6 +281,10 @@ class PageParts(HTMLParser):
         self.current_links = []
         self.selected_titles = []
         self.panes = []
+        self.pane_notes = None
+        self.pane_tags = []
+        self._in_pane = False
+        self._in_notes = False
         self.rows = []
         self._collect = []  # the lists that the next text goes into
         self._row = None  # the <li> we are in: [id, classes]
@@ -284,6 +293,7 @@ class PageParts(HTMLParser):
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
+        self._pane_start(tag, attrs)
         # Text inside a tag within the title (like the due date) is not the title.
         self._collect = []
         if self._title_depth is not None:
@@ -306,7 +316,25 @@ class PageParts(HTMLParser):
         if tag == "aside":
             self.panes.append(attrs.get("aria-label"))
 
+    def _pane_start(self, tag, attrs):
+        """Read the inside of the pane: its tags, and its notes row."""
+        if tag == "aside":
+            self._in_pane = True
+            return
+        if not self._in_pane:
+            return
+        self.pane_tags.append(tag)
+        if tag == "dd" and attrs.get("class") == "notes":
+            self.pane_notes = ""
+            self._in_notes = True
+        elif tag == "br" and self._in_notes:
+            self.pane_notes += "\n"
+
     def handle_endtag(self, tag):
+        if tag == "aside":
+            self._in_pane = False
+        if tag == "dd":
+            self._in_notes = False
         self._collect = []
         if self._title_depth is not None:
             if self._title_depth > 0:
@@ -319,6 +347,8 @@ class PageParts(HTMLParser):
             self._row = None
 
     def handle_data(self, data):
+        if self._in_notes:
+            self.pane_notes += data
         for target in self._collect:
             target[-1] += data.strip()
 
@@ -365,12 +395,21 @@ def title_element(todo, query="", selected=False):
 
 
 def pane_element(
-    todo, *, status="Active", due="No due date", priority="Medium", created, close_url
+    todo,
+    *,
+    status="Active",
+    due="No due date",
+    priority="Medium",
+    created,
+    close_url,
+    notes=None,
 ):
     """The whole details <aside>, exactly as the page must show it.
 
     `close_url` is the list address without the selection, like "/"; the
     builder adds "#todo-<pk>". The pane shows every priority, Medium too.
+    `notes` (None: no notes row) is plain text: each line is escaped, and the
+    lines are joined with <br>, after the Created row.
     """
     rows = [
         ("Status", status),
@@ -379,6 +418,9 @@ def pane_element(
         ("Created", created),
     ]
     dl = "".join(f"<dt>{name}</dt><dd>{value}</dd>" for name, value in rows)
+    if notes is not None:
+        lines = "<br>".join(escape(line) for line in notes.split("\n"))
+        dl += f'<dt>Notes</dt><dd class="notes">{lines}</dd>'
     return (
         '<aside class="details" id="details" tabindex="-1" aria-label="Details">'
         f"<h2>{escape(todo.title)}</h2>"
