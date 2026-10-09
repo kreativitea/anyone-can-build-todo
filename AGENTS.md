@@ -39,7 +39,8 @@ This project uses **uv** to install Python and the packages. Run every Python co
 - `make test` — run the unit and integration tests, in parallel (fast)
 - `make test-cuj` — run the CUJ tests in a real browser (slow)
 - `make lint` / `make format` — Ruff: find mistakes, and rewrite code in the standard style
-- `make check` — every commit check on every file, then every test
+- `make check` — every commit check on every file, a check that no migration is missing or
+  clashing, then every test
 
 Add a package with `uv add <name>`, never with `pip install`. After changing `models.py`, run
 `uv run python manage.py makemigrations` and then `uv run python manage.py migrate`.

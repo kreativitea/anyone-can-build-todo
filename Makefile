@@ -37,6 +37,7 @@ format:
 
 check:
 	uv run pre-commit run --all-files
+	uv run python manage.py makemigrations --check --dry-run
 	uv run python manage.py test --parallel auto
 
 reset:
