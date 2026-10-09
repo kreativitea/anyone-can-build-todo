@@ -40,8 +40,9 @@ class PositionMigrationTests(TransactionTestCase):
         OldList = apps.get_model("todos", "TodoList")
         OldTodo = apps.get_model("todos", "Todo")
         ana = User.objects.create(username="ana")
-        home = OldList.objects.create(owner=ana, name="Home")
-        work = OldList.objects.create(owner=ana, name="Work")
+        # A historical model has no save() of ours: name_key is set by hand.
+        home = OldList.objects.create(owner=ana, name="Home", name_key="home")
+        work = OldList.objects.create(owner=ana, name="Work", name_key="work")
 
         def make(todo_list, title):
             return OldTodo.objects.create(owner=ana, todo_list=todo_list, title=title)
