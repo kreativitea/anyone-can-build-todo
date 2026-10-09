@@ -1,6 +1,6 @@
 # Plan: sort the list (date added, due date, priority, title)
 
-Status: **approved.**
+Status: **done.** See "What happened" at the end.
 
 This is feature 9, the first one in wave 3 of [the rollout plan](feature-rollout.md). The merge
 order in wave 3 is: **9 sort** → 19 repeating → 15 subtasks.
@@ -398,3 +398,61 @@ search tests, and `test_list_page_loads`.
   goes to its new date. This is expected; 19's plan should say it to the person.
 - **Collisions in wave 3.** 19 and 15 also change `page_context` and the template. Sort merges
   first, and only adds lines. They rebase on it.
+
+## What happened
+
+Built on branch `feature/sort`, from `main` with waves 1 and 2 merged (and the details pane, 21).
+
+**Where `main` was different from this plan, and what the builder did:**
+
+- `list_params` on `main` ends with `selected` (the details pane), which must always be the
+  **last** key. So `sort` goes after `q` and before `selected`: the address is `show`, `q`,
+  `sort`, `selected`. One more unit test checks it (`test_selected_stays_after_the_sort`), and
+  `test_sort_links` also checks that the sort links keep the selection, last.
+- `sort_todos` runs after `search_todos` and **before** `selected_todo`, as the comment in
+  `page_context` asks.
+- The integration tests read the order from the page with `page_parts(response).titles`, not from
+  `response.context["todos"]`. After the details pane, every title check goes through
+  `parts.titles` or `title_element`. `test_sort_is_kept_everywhere` also checks the whole title
+  link (`title_element`), so the title links keep the sort too.
+- `test_post_goes_back_with_the_sort` also posts to **edit**, not only toggle, delete and add.
+- `test_sort_links` imports `sort_links` inside the test, so only that one test fails with
+  `ImportError` before the change (an import at the top would break the whole file).
+- `test_list_params_twice_is_the_same` is in `SearchParamsTests` (made by 10, not 8).
+- The CSS is in `todo_list.html`'s `{% block style %}`, next to the filter's, on top of
+  `base.html`.
+
+**Tests first.** On `main`, 27 test parts failed and 1 test had an error, each for the reason in
+the tables above: `sort` was dropped, the list stayed oldest first, there were no sort links, and
+`sort_links` could not be imported. The protecting tests passed, and each one failed against its
+deliberate bug: keep any `sort` value (`test_list_params_drops_the_default_and_unknown_sorts`,
+`test_redirect_drops_a_bad_sort`), store the label `"Due date"`
+(`test_list_params_twice_is_the_same`), and order by `"-created_at"`
+(`test_default_is_oldest_first`).
+
+**After the code.** `make test`: 243 tests OK. `make test-cuj`: 3 tests OK. `make check`: every
+commit check passed, `makemigrations --check`: "No changes detected", 246 tests OK.
+
+**Deliberate bugs, after the code** (each one put back; the diff shows none of them):
+
+| Bug | Failed |
+|---|---|
+| remove `nulls_last=True` | `test_sort_by_due_date`, `test_priority_ties_go_soonest_due_first` |
+| remove `"-priority"` from the `due` row | `test_due_date_ties_go_high_priority_first` |
+| remove the due date key from the `priority` row | `test_priority_ties_go_soonest_due_first` |
+| remove `"created_at"` from the `title` row (wrong tie key) | `test_title_ties_keep_date_added_order` |
+| `"title"` instead of `Lower("title")` | `test_sort_by_title_ignores_case` |
+| reversed default (`"-created_at", "-pk"`) | `test_default_is_oldest_first` (all three addresses) |
+| accept any `sort` value | `test_list_params_drops_the_default_and_unknown_sorts` (6 parts), `test_redirect_drops_a_bad_sort` (3 parts) |
+| store the label instead of the value | `test_list_params_twice_is_the_same` (2 parts) |
+
+**Checked by eye** (headless Chrome, 1280 wide, a scratch database):
+
+- `/?sort=priority`: "Sort by: Date added · Due date · **Priority** · Title" is one row under the
+  filter links, which are under the search form. Priority is bold, the others are links. The list
+  is Pay rent (High, 12 Oct), Book dentist (High, 15 Oct), うどんを作る (High, no date), then the
+  Medium ones (the dated ones first), then Call the bank (Low).
+- `/?show=active&q=a&sort=title`: Active and Title are both bold, "Clear search" is there, and the
+  list is Call the bank, Pay rent.
+- A phone width could not be checked this way: headless Chrome does not make its window narrower
+  than about 500 pixels, so the picture is cut. The sort row has `flex-wrap`, like the add form.
