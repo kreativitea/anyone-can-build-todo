@@ -277,8 +277,8 @@ detected". Django wrote `0002_todo_due_date.py`; nobody edited it.
 Differences from the plan:
 
 - **One helper for the page's data.** The orchestrator asked for this after the plan was approved.
-  `views.py` has a small function, `page_context(form)`, that returns what the page needs, one key
-  per line. Both `todo_list` and the error path of `todo_add` use it. About 15 later features add a
+  `views.py` has a small function, `page_context(request, form)`, that returns what the page needs,
+  one key per line. It takes `request` but does not use it yet: the filter feature needs it next. Both `todo_list` and the error path of `todo_add` use it. About 15 later features add a
   key to the page, so each one now adds **one line in one place**, not two, and two branches are
   less likely to change the same line. The behaviour does not change, so no test was added.
 - **`test_no_due_date_shows_no_due_text` looks for `>due `, not `due `.** The page's CSS has the
