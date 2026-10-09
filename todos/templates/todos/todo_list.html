@@ -118,8 +118,8 @@
         {% if selected.notes %}<dt>Notes</dt><dd class="notes">{{ selected.notes|linebreaksbr }}</dd>{% endif %}
       </dl>
       {# Every control that CHANGES something goes in details-actions; Close only reads. #}
-      {# Edit (4): the pane's Edit link goes here, before Close. #}
-      <p class="details-actions"><a href="{{ close_url }}#todo-{{ selected.pk }}">Close</a></p>
+      {# Edit keeps list_query, with `selected`: after Save or Cancel the pane is open again. #}
+      <p class="details-actions"><a href="{% url 'todo_edit' selected.pk %}{{ list_query }}">Edit</a> <a href="{{ close_url }}#todo-{{ selected.pk }}">Close</a></p>
     </aside>
     {% elif todos %}
     <p class="pane-hint">Click a to-do's title to see its details.</p>
