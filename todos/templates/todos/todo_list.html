@@ -17,6 +17,7 @@
     li .title { flex: 1; min-width: 0; overflow-wrap: anywhere; }
     li.done .title { text-decoration: line-through; color: #666; }
     li .due { display: block; color: #666; font-size: 0.9rem; }
+    .list-footer { color: #666; font-size: 0.9rem; }
     button { padding: 0.4rem 0.8rem; font-size: 0.9rem; cursor: pointer; }
   </style>
 </head>
@@ -51,5 +52,10 @@
       <li>Nothing to do yet. Add something above.</li>
     {% endfor %}
   </ul>
+  {% if has_todos %}
+    <div class="list-footer">
+      <p class="count">{{ remaining_count }} item{{ remaining_count|pluralize }} left</p>
+    </div>
+  {% endif %}
 </body>
 </html>

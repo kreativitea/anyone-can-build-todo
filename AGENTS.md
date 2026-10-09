@@ -16,11 +16,11 @@ in a SQLite database, the file `db.sqlite3`, which is not in git.
 |---|---|
 | `config/settings.py` | Settings for the whole project. The secret key, debug and allowed hosts come from environment variables on a live server, with defaults for a laptop. |
 | `config/urls.py` | Sends `/admin/` to Django's admin, and everything else to `todos/urls.py`. |
-| `todos/models.py` | The `Todo` table: `title`, `done`, `due_date`, `created_at`. |
+| `todos/models.py` | The `Todo` table: `title`, `done`, `due_date`, `created_at`. `Todo.objects.remaining()` gives the to-dos that are not done. |
 | `todos/forms.py` | `TodoForm`: the add form, built from the model. It checks the title and the due date. |
 | `todos/urls.py` | The four addresses: the list, add, toggle, delete. |
-| `todos/views.py` | One function per address. Add, toggle and delete accept `POST` only, then send the browser back to the list. If the add form has errors, the page is shown again with the errors and what the person typed. Every key the list page needs goes in `page_context(request, form)`, so both views get it. |
-| `todos/templates/todos/todo_list.html` | The one page: the add form (drawn by Django from `TodoForm`) and the list. |
+| `todos/views.py` | One function per address. Add, toggle and delete accept `POST` only, then send the browser back to the list. If the add form has errors, the page is shown again with the errors and what the person typed. Every key the list page needs goes in `page_context(request, form)`, so both views get it; today that is `todos`, `form`, `has_todos` and `remaining_count`. |
+| `todos/templates/todos/todo_list.html` | The one page: the add form (drawn by Django from `TodoForm`), the list, and under it how many to-dos are left. |
 | `todos/tests/unit/` | Unit tests: one piece alone, like the model, with no request. |
 | `todos/tests/integration/` | Integration tests: requests through Django's test client, from the URL to the database. |
 | `todos/tests/cuj/` | CUJ tests (critical user journeys): a whole journey in a real browser, with Playwright. |

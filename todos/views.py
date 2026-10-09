@@ -13,6 +13,8 @@ def page_context(request, form):
     return {
         "todos": Todo.objects.all(),
         "form": form,
+        "has_todos": Todo.objects.exists(),
+        "remaining_count": Todo.objects.remaining().count(),
     }
 
 
