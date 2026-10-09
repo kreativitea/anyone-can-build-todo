@@ -1,11 +1,44 @@
+import re
 from datetime import date
 
 from django.db import connection
-from django.test import TestCase
+from django.test import Client, TestCase
 from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 
 from todos.models import Todo
+
+CSRF_INPUT = re.compile(
+    r'<input type="hidden" name="csrfmiddlewaretoken" value="[^"]*">'
+)
+
+
+def page_without_csrf(response):
+    """The page's HTML without the CSRF token inputs.
+
+    The token is different every time the page is drawn, so a test cannot
+    write it down. Taking it out lets a test compare whole forms exactly.
+    """
+    return CSRF_INPUT.sub("", response.content.decode())
+
+
+def delete_completed_form(ids):
+    """The delete-completed form, exactly as the page must show it."""
+    hidden = "".join(f'<input type="hidden" name="ids" value="{pk}">' for pk in ids)
+    count = len(ids)
+    return (
+        '<form class="delete-completed" method="post" action="/delete-completed/">'
+        f"{hidden}"
+        f'<button type="submit">Delete {count} completed to-do'
+        f"{'' if count == 1 else 's'}</button>"
+        "</form>"
+    )
+
+
+def list_footer(count_text, completed_ids=()):
+    """The whole footer under the list, exactly as the page must show it."""
+    form = delete_completed_form(completed_ids) if completed_ids else ""
+    return f'<div class="list-footer"><p class="count">{count_text}</p>{form}</div>'
 
 
 class TodoTests(TestCase):
@@ -147,18 +180,23 @@ class TodoTests(TestCase):
 class CountTests(TestCase):
     """How many to-dos are left, shown under the list."""
 
-    def count_footer(self, text):
-        """The whole footer, as the page must show it."""
-        return f'<div class="list-footer"><p class="count">{text}</p></div>'
+    def assertFooter(self, response, text, completed=()):
+        """The whole footer is on the page once, exactly.
+
+        A completed to-do also puts the delete-completed button in the footer,
+        so `completed` names them.
+        """
+        footer = list_footer(text, [todo.pk for todo in completed])
+        self.assertInHTML(footer, page_without_csrf(response), count=1)
 
     # Count: new behaviour.
 
     def test_count_is_shown_under_the_list(self):
         Todo.objects.create(title="Buy milk")
         Todo.objects.create(title="Call home")
-        Todo.objects.create(title="Read chapter 3", done=True)
+        read = Todo.objects.create(title="Read chapter 3", done=True)
         response = self.client.get(reverse("todo_list"))
-        self.assertContains(response, self.count_footer("2 items left"), html=True)
+        self.assertFooter(response, "2 items left", completed=[read])
 
     def test_count_comes_after_the_list(self):
         Todo.objects.create(title="Buy milk")
@@ -169,12 +207,12 @@ class CountTests(TestCase):
     def test_count_says_item_for_one(self):
         Todo.objects.create(title="Buy milk")
         response = self.client.get(reverse("todo_list"))
-        self.assertContains(response, self.count_footer("1 item left"), html=True)
+        self.assertFooter(response, "1 item left")
 
     def test_count_says_items_for_zero(self):
-        Todo.objects.create(title="Buy milk", done=True)
+        milk = Todo.objects.create(title="Buy milk", done=True)
         response = self.client.get(reverse("todo_list"))
-        self.assertContains(response, self.count_footer("0 items left"), html=True)
+        self.assertFooter(response, "0 items left", completed=[milk])
 
     def test_count_is_on_the_error_page(self):
         Todo.objects.create(title="Call home")
@@ -182,16 +220,16 @@ class CountTests(TestCase):
             reverse("todo_add"), {"title": "Buy milk", "due_date": "not-a-date"}
         )
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, self.count_footer("1 item left"), html=True)
+        self.assertFooter(response, "1 item left")
 
     def test_count_follows_done_and_undo(self):
         first = Todo.objects.create(title="Buy milk")
         Todo.objects.create(title="Call home")
         toggle = reverse("todo_toggle", args=[first.pk])
         response = self.client.post(toggle, follow=True)
-        self.assertContains(response, self.count_footer("1 item left"), html=True)
+        self.assertFooter(response, "1 item left", completed=[first])
         response = self.client.post(toggle, follow=True)
-        self.assertContains(response, self.count_footer("2 items left"), html=True)
+        self.assertFooter(response, "2 items left")
 
     def test_the_database_does_the_counting(self):
         Todo.objects.create(title="Buy milk")
@@ -213,3 +251,133 @@ class CountTests(TestCase):
         self.assertNotContains(response, "items left")
         self.assertNotContains(response, 'class="count"')
         self.assertNotContains(response, 'class="list-footer"')
+
+
+class DeleteCompletedTests(TestCase):
+    def setUp(self):
+        self.milk = Todo.objects.create(title="Buy milk", done=True)
+        self.home = Todo.objects.create(title="Call home", done=True)
+        self.read = Todo.objects.create(title="Read chapter 3")
+
+    def post_ids(self, ids, client=None):
+        return (client or self.client).post(
+            reverse("todo_delete_completed"), {"ids": ids}
+        )
+
+    def titles(self):
+        return set(Todo.objects.values_list("title", flat=True))
+
+    # Delete completed: new behaviour.
+
+    def test_delete_completed_removes_the_completed_ones_seen(self):
+        response = self.post_ids([self.milk.pk, self.home.pk])
+        self.assertRedirects(response, reverse("todo_list"))
+        self.assertEqual(self.titles(), {"Read chapter 3"})
+
+    def test_completed_after_the_page_loaded_survives(self):
+        # The page showed only "Buy milk" as completed. "Call home" became
+        # completed later, in another browser, so its id was not sent.
+        self.post_ids([self.milk.pk])
+        self.assertEqual(self.titles(), {"Call home", "Read chapter 3"})
+
+    def test_open_todo_is_never_deleted(self):
+        self.post_ids([self.read.pk])
+        self.assertEqual(Todo.objects.count(), 3)
+
+    def test_bad_ids_are_ignored(self):
+        # 19 digits can be too big for SQLite's 64-bit integer: OverflowError,
+        # a 500 page. This pins the 18-digit cap in the view.
+        too_long = ["9" * 19, "9" * 30]
+        response = self.post_ids(["abc", "", "²", *too_long, str(self.milk.pk)])
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(self.titles(), {"Call home", "Read chapter 3"})
+
+    def test_delete_completed_does_not_load_each_todo(self):
+        url = reverse("todo_delete_completed")
+        with CaptureQueriesContext(connection) as queries:
+            self.client.post(url, {"ids": [self.milk.pk, self.home.pk]})
+        sqls = [query["sql"].lstrip().upper() for query in queries]
+        self.assertTrue(any(sql.startswith("DELETE") for sql in sqls), sqls)
+        reads = [s for s in sqls if s.startswith("SELECT") and "TODOS_TODO" in s]
+        self.assertEqual(reads, [])
+
+    def test_get_cannot_delete_completed(self):
+        response = self.client.get(reverse("todo_delete_completed"))
+        self.assertEqual(response.status_code, 405)
+        self.assertEqual(Todo.objects.count(), 3)
+
+    def test_delete_completed_needs_the_csrf_token(self):
+        response = self.post_ids(
+            [self.milk.pk, self.home.pk], client=Client(enforce_csrf_checks=True)
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(Todo.objects.count(), 3)
+
+    def test_the_form_on_the_page_works_with_csrf_checks_on(self):
+        # Like a real browser: read the form from the page, then send it back.
+        # This fails if the form has no {% csrf_token %}.
+        client = Client(enforce_csrf_checks=True)
+        page = client.get(reverse("todo_list")).content.decode()
+        form = re.search(r'<form class="delete-completed".*?</form>', page, re.S)
+        self.assertIsNotNone(form, "the page has no delete-completed form")
+        token = re.search(r'name="csrfmiddlewaretoken" value="([^"]+)"', form[0])
+        self.assertIsNotNone(token, "the delete-completed form has no CSRF token")
+        ids = re.findall(r'name="ids" value="([^"]+)"', form[0])
+        response = client.post(
+            reverse("todo_delete_completed"),
+            {"csrfmiddlewaretoken": token[1], "ids": ids},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(self.titles(), {"Read chapter 3"})
+
+    def test_delete_completed_form_on_the_list(self):
+        response = self.client.get(reverse("todo_list"))
+        form = delete_completed_form([self.milk.pk, self.home.pk])
+        self.assertInHTML(form, page_without_csrf(response), count=1)
+
+    def test_delete_completed_form_is_in_the_list_footer(self):
+        # The footer under the list is a <div>, not a <footer>: a <footer> in
+        # <body> is announced to screen readers as the footer of the page.
+        response = self.client.get(reverse("todo_list"))
+        footer = list_footer("1 item left", [self.milk.pk, self.home.pk])
+        self.assertInHTML(footer, page_without_csrf(response), count=1)
+
+    def test_delete_completed_button_says_one_to_do(self):
+        self.home.delete()
+        response = self.client.get(reverse("todo_list"))
+        form = delete_completed_form([self.milk.pk])
+        self.assertIn("Delete 1 completed to-do</button>", form)
+        self.assertInHTML(form, page_without_csrf(response), count=1)
+
+    def test_at_most_500_are_offered_at_once(self):
+        # Django refuses a form with more than 1,000 fields, and then nothing
+        # is deleted. So the page offers the oldest 500; the next click
+        # deletes the rest.
+        Todo.objects.bulk_create(Todo(title=f"Done {n}", done=True) for n in range(499))
+        oldest_first = list(
+            Todo.objects.filter(done=True)
+            .order_by("created_at", "pk")
+            .values_list("pk", flat=True)
+        )
+        self.assertEqual(len(oldest_first), 501)
+        self.assertEqual(oldest_first[0], self.milk.pk)
+
+        response = self.client.get(reverse("todo_list"))
+        footer = list_footer("1 item left", oldest_first[:500])
+        self.assertInHTML(footer, page_without_csrf(response), count=1)
+
+        response = self.post_ids(oldest_first[:500], client=self.client)
+        self.assertEqual(response.status_code, 302)
+        response = self.client.get(reverse("todo_list"))
+        footer = list_footer("1 item left", oldest_first[500:])
+        self.assertInHTML(footer, page_without_csrf(response), count=1)
+
+    # Delete completed: protect what already works.
+
+    def test_no_delete_completed_form_when_nothing_is_completed(self):
+        Todo.objects.filter(done=True).delete()
+        response = self.client.get(reverse("todo_list"))
+        # The whole footer, exactly: the count, and no form.
+        self.assertInHTML(
+            list_footer("1 item left"), page_without_csrf(response), count=1
+        )

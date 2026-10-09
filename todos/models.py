@@ -6,6 +6,10 @@ class TodoQuerySet(models.QuerySet):
         """The to-dos that are not done yet."""
         return self.filter(done=False)
 
+    def completed(self):
+        """The to-dos that are done."""
+        return self.filter(done=True)
+
 
 class Todo(models.Model):
     title = models.CharField(max_length=200)
