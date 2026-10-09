@@ -86,3 +86,60 @@ class PageParts(HTMLParser):
 
 def page_parts(response):
     return PageParts(response.content.decode())
+
+
+class PageForm:
+    """One form on the page: where it sends, and what it sends."""
+
+    def __init__(self, method, action):
+        self.method = method
+        self.action = action
+        self.fields = {}  # name -> value, from the form's own <input>s
+        self.button = ""  # the text on its submit button
+
+    def data(self, **typed):
+        """What a browser sends: the form's own fields, plus what a person typed.
+
+        Typing into a field the form does not have is a mistake in the test or
+        the page, so it fails at once.
+        """
+        missing = set(typed) - set(self.fields)
+        if missing:
+            raise AssertionError(f"the form has no field {sorted(missing)}")
+        return {**self.fields, **typed}
+
+
+class PageForms(HTMLParser):
+    """Reads every form on the page, with its inputs and its button text."""
+
+    def __init__(self, html):
+        super().__init__()
+        self.forms = []
+        self._form = None
+        self._in_button = False
+        self.feed(html)
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag == "form":
+            method = (attrs.get("method") or "get").lower()
+            self._form = PageForm(method, attrs.get("action", ""))
+            self.forms.append(self._form)
+        elif tag == "input" and self._form is not None and "name" in attrs:
+            self._form.fields[attrs["name"]] = attrs.get("value") or ""
+        elif tag == "button" and self._form is not None:
+            self._in_button = True
+
+    def handle_endtag(self, tag):
+        if tag == "form":
+            self._form = None
+        elif tag == "button":
+            self._in_button = False
+
+    def handle_data(self, data):
+        if self._in_button:
+            self._form.button += data.strip()
+
+
+def page_forms(response):
+    return PageForms(response.content.decode()).forms
