@@ -1,6 +1,8 @@
 from datetime import date
 
+from django.db import connection
 from django.test import TestCase
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 
 from todos.models import Todo
@@ -145,6 +147,10 @@ class TodoTests(TestCase):
 class CountTests(TestCase):
     """How many to-dos are left, shown under the list."""
 
+    def count_footer(self, text):
+        """The whole footer, as the page must show it."""
+        return f'<div class="list-footer"><p class="count">{text}</p></div>'
+
     # Count: new behaviour.
 
     def test_count_is_shown_under_the_list(self):
@@ -152,17 +158,23 @@ class CountTests(TestCase):
         Todo.objects.create(title="Call home")
         Todo.objects.create(title="Read chapter 3", done=True)
         response = self.client.get(reverse("todo_list"))
-        self.assertContains(response, '<p class="count">2 items left</p>', html=True)
+        self.assertContains(response, self.count_footer("2 items left"), html=True)
+
+    def test_count_comes_after_the_list(self):
+        Todo.objects.create(title="Buy milk")
+        page = self.client.get(reverse("todo_list")).content.decode()
+        self.assertIn('class="count"', page)
+        self.assertGreater(page.index('class="count"'), page.index("</ul>"))
 
     def test_count_says_item_for_one(self):
         Todo.objects.create(title="Buy milk")
         response = self.client.get(reverse("todo_list"))
-        self.assertContains(response, '<p class="count">1 item left</p>', html=True)
+        self.assertContains(response, self.count_footer("1 item left"), html=True)
 
     def test_count_says_items_for_zero(self):
         Todo.objects.create(title="Buy milk", done=True)
         response = self.client.get(reverse("todo_list"))
-        self.assertContains(response, '<p class="count">0 items left</p>', html=True)
+        self.assertContains(response, self.count_footer("0 items left"), html=True)
 
     def test_count_is_on_the_error_page(self):
         Todo.objects.create(title="Call home")
@@ -170,7 +182,27 @@ class CountTests(TestCase):
             reverse("todo_add"), {"title": "Buy milk", "due_date": "not-a-date"}
         )
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, '<p class="count">1 item left</p>', html=True)
+        self.assertContains(response, self.count_footer("1 item left"), html=True)
+
+    def test_count_follows_done_and_undo(self):
+        first = Todo.objects.create(title="Buy milk")
+        Todo.objects.create(title="Call home")
+        toggle = reverse("todo_toggle", args=[first.pk])
+        response = self.client.post(toggle, follow=True)
+        self.assertContains(response, self.count_footer("1 item left"), html=True)
+        response = self.client.post(toggle, follow=True)
+        self.assertContains(response, self.count_footer("2 items left"), html=True)
+
+    def test_the_database_does_the_counting(self):
+        Todo.objects.create(title="Buy milk")
+        with CaptureQueriesContext(connection) as queries:
+            self.client.get(reverse("todo_list"))
+        counts = [
+            q["sql"]
+            for q in queries.captured_queries
+            if "COUNT(" in q["sql"].upper() and "todos_todo" in q["sql"]
+        ]
+        self.assertTrue(counts, "the page should ask the database to COUNT the to-dos")
 
     # Count: protect what already works.
 
@@ -179,4 +211,5 @@ class CountTests(TestCase):
         self.assertContains(response, "Nothing to do yet")
         self.assertNotContains(response, "item left")
         self.assertNotContains(response, "items left")
-        self.assertNotContains(response, "<footer")
+        self.assertNotContains(response, 'class="count"')
+        self.assertNotContains(response, 'class="list-footer"')
