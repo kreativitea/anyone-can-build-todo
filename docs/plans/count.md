@@ -1,6 +1,6 @@
 # Plan: show how many to-dos are left
 
-Status: **approved**. No code has changed yet.
+Status: **done**. See "What happened" at the end.
 
 This is feature 12, in wave 1 of [the rollout plan](feature-rollout.md). The merge order in wave 1
 is: 5 due date → **12 count** → 11 clear completed → 8 filter.
@@ -273,3 +273,22 @@ this note to feature 8's builder.
   clash itself.
 - **Two more small database questions per page** (`exists()` and `count()`). Each one is very fast.
   This is fine for a small app; we do not try to merge them into one question.
+
+## What happened
+
+Built as planned. The tests were written first. Before the code: the 2 unit tests failed with
+`AttributeError: 'Manager' object has no attribute 'remaining'`, the 4 new integration tests failed
+with `AssertionError` (no count on the page), and `test_no_count_when_the_list_is_empty` and
+`test_list_page_loads` passed. After the code: Unit 6 passed, Integration 23 passed, CUJ 1 passed,
+and `make check` passed (no migration needed: `makemigrations --check` said "No changes detected").
+
+Small differences from the plan, and why:
+
+- **`page_context` takes `request` too.** The plan shows `page_context(form)`. On the branch we
+  started from, it is already `page_context(request, form)` (added for the filter feature). The two
+  new keys went inside it, exactly as planned; only the signature differs.
+- **The branch.** The plan says to start from `origin/main` with the due date merged. The due date
+  was not merged yet, so this branch (`feature/count`) starts from `origin/feature/due-date`, and
+  will be moved onto `main` after the due date merges.
+- **Step 7 (check by hand in the browser) was not done.** The integration tests check the same
+  things (2 items left, 0 items left, no footer when empty) through Django's test client.
