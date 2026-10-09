@@ -1,6 +1,6 @@
 # Plan: filter the list (All, Active, Completed)
 
-Status: **approved.** Tests are written first; the code follows.
+Status: **approved, in progress.** Built and tested on top of feature 5; the part "After 12 and 11 are on `main`" is still to do.
 
 This is feature 8, the last one in wave 1 of [the rollout plan](feature-rollout.md). An adversarial
 review (a reviewer whose job is to find what is wrong) checked the first version. Every finding is
@@ -426,3 +426,37 @@ end with the query too, or the test fails.
 - **Reloading after a failed add.** The error page is the answer to a `POST`, at `/add/?show=...`.
   If the person reloads it, the browser asks to send the form again — the same as after feature 5;
   this feature does not change it.
+
+## What happened
+
+The builder followed the plan. These are the places where it did something a little different, and
+why.
+
+1. **The starting point.** The branch starts from `feature/due-date` (feature 5, finished but not
+   merged yet), not from `main` with feature 5 in it. The code there is the same as the plan
+   expects: `forms.py`, and `page_context(request, form)`.
+2. **The part for 12 and 11 is not done yet.** The three tests in "After the rebase on 12 and 11",
+   and the changes in "After 12 and 11 are on `main`", wait until this branch is rebased on `main`
+   with 12 and 11 in it.
+3. **"`aria-current` is on the page once".** The page's CSS also has the words
+   `aria-current="page"`, in `nav.filters a[aria-current="page"]`. So counting the text would find
+   two. Instead, the test helper (an `HTMLParser`) also lists the text of every link that has
+   `aria-current="page"`, and the test checks that this list is exactly `["Completed"]`. The same
+   check is used in `test_unknown_filter_marks_all` and `test_add_error_keeps_the_filter`.
+4. **`test_toggle_on_active_leaves_the_list`** checks the end address with the test client's
+   `redirect_chain`: it must be `[("/?show=active", 302)]`.
+5. **The open-redirect test was seen failing twice.** Before the code, the real bug
+   (`redirect(request.POST.get("next") or "todo_list")`) was put in `todo_toggle` for a moment. After
+   the code, the plan's version of the bug was put in `back_to_list`. Both times
+   `test_redirect_only_goes_to_the_list_page` failed with `'https://evil.example' != '/'`. Both
+   times the line was taken out again, and `git diff` was checked.
+6. **`page_context`'s docstring** lost the line "`request` is not used yet", because now it is.
+7. **Ruff format** wrapped a few long lines in the tests and in `filter_links`. No change in
+   meaning.
+8. **Step 6 (look at the page in a browser by hand)** was not done by the builder agent. The
+   integration tests check the links, the bold link's `aria-current`, the forms and the redirects;
+   the CUJ test still passes unchanged.
+
+Results: before the code, the unit file failed with one `ImportError`, all 13 new integration tests
+failed for the reasons in the plan, and the 4 protecting tests passed. After the code, `make test`,
+`make test-cuj` and `make check` all pass (CUJ 1, Integration 35, Unit 7).
