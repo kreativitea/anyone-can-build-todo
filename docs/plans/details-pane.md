@@ -680,8 +680,12 @@ The builder followed the plan. These are the places where it did something diffe
    - 375 pixels, Buy milk selected: the pane is under the list and the footer; the browser jumped to
      it (the page is short, so it scrolls only a little). The row is marked the same way. The title
      does not move (24 pixels both times).
-   - The titles are now underlined, like every link. The plan only said `color: inherit`, so this
-     was left as it is.
+   - **Owner decision, after the first build:** the title links are **not** underlined normally.
+     They are underlined only on hover and on keyboard focus (`.title a:hover, .title
+     a:focus-visible`), and they keep `color: inherit` and the browser's focus outline. Checked by
+     eye at 1280 pixels: no title is underlined; the hovered title (Book the dentist) is; a title
+     reached with Tab is underlined and has the normal blue focus ring; the done title (Call home)
+     is still crossed out and grey.
 
 ### After the rebase on priority (6) and edit (4)
 
