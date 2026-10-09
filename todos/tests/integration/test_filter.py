@@ -3,7 +3,6 @@ from django.urls import reverse
 from todos.models import Todo
 from todos.tests.integration.helpers import (
     LoggedInTestCase,
-    list_footer,
     page_parts,
     page_without_csrf,
 )
@@ -18,19 +17,21 @@ EMPTY_MESSAGES = [EMPTY_ALL, EMPTY_ACTIVE, EMPTY_COMPLETED]
 NAV = (
     '<nav class="filters" aria-labelledby="filter-label">'
     '<span id="filter-label">Show:</span>'
-    '<a href="/"{all}>All</a>'
-    '<a href="/?show=active"{active}>Active</a>'
-    '<a href="/?show=completed"{completed}>Completed</a>'
+    '<a href="{list}"{all}>All</a>'
+    '<a href="{list}?show=active"{active}>Active</a>'
+    '<a href="{list}?show=completed"{completed}>Completed</a>'
     "</nav>"
 )
 CURRENT = ' aria-current="page"'
 
 
-def nav(chosen):
-    """The whole filter <nav>, with `chosen` ("all", "active" or "completed") marked."""
+def nav(chosen, *, list_url):
+    """The whole filter <nav> of the list at `list_url`, with `chosen` ("all",
+    "active" or "completed") marked.
+    """
     marks = {"all": "", "active": "", "completed": ""}
     marks[chosen] = CURRENT
-    return NAV.format(**marks)
+    return NAV.format(list=list_url, **marks)
 
 
 class FilterTests(LoggedInTestCase):
@@ -46,48 +47,54 @@ class FilterTests(LoggedInTestCase):
         in these tests, so it is always there).
         """
         return [
-            reverse("todo_add") + query,
+            self.add_url() + query,
             reverse("todo_toggle", args=[todo.pk]) + query,
             reverse("todo_delete", args=[todo.pk]) + query,
-            reverse("todo_delete_completed") + query,
+            self.delete_completed_url() + query,
         ]
 
     # Filter: new behaviour.
 
     def test_active_shows_only_active_todos(self):
         self.make_one_of_each()
-        response = self.client.get("/?show=active")
+        response = self.client.get(self.list_url(query="?show=active"))
         self.assertEqual(page_parts(response).titles, ["Buy milk"])
 
     def test_completed_shows_only_completed_todos(self):
         self.make_one_of_each()
-        response = self.client.get("/?show=completed")
+        response = self.client.get(self.list_url(query="?show=completed"))
         self.assertEqual(page_parts(response).titles, ["Call home"])
 
     def test_filter_links_are_on_the_page(self):
-        response = self.client.get("/")
-        self.assertContains(response, nav("all"), count=1, html=True)
+        response = self.client.get(self.list_url())
+        self.assertContains(
+            response, nav("all", list_url=self.list_url()), count=1, html=True
+        )
 
     def test_chosen_filter_is_marked(self):
-        response = self.client.get("/?show=completed")
-        self.assertContains(response, nav("completed"), count=1, html=True)
+        response = self.client.get(self.list_url(query="?show=completed"))
+        self.assertContains(
+            response, nav("completed", list_url=self.list_url()), count=1, html=True
+        )
         self.assertEqual(page_parts(response).current_links, ["Completed"])
 
     def test_unknown_filter_marks_all(self):
-        response = self.client.get("/?show=banana")
-        self.assertContains(response, nav("all"), count=1, html=True)
+        response = self.client.get(self.list_url(query="?show=banana"))
+        self.assertContains(
+            response, nav("all", list_url=self.list_url()), count=1, html=True
+        )
         self.assertEqual(page_parts(response).current_links, ["All"])
 
     def test_empty_message_for_each_filter(self):
         with self.subTest(show="active"):
             self.make_todo(title="Call home", done=True)
-            response = self.client.get("/?show=active")
+            response = self.client.get(self.list_url(query="?show=active"))
             self.assertEqual(page_parts(response).titles, [])
             self.assertContains(response, EMPTY_ACTIVE, count=1, html=True)
         Todo.objects.all().delete()
         with self.subTest(show="completed"):
             self.make_todo(title="Buy milk")
-            response = self.client.get("/?show=completed")
+            response = self.client.get(self.list_url(query="?show=completed"))
             self.assertEqual(page_parts(response).titles, [])
             self.assertContains(response, EMPTY_COMPLETED, count=1, html=True)
 
@@ -95,7 +102,7 @@ class FilterTests(LoggedInTestCase):
         self.make_one_of_each()
         for show, shown in [("active", self.active), ("completed", self.completed)]:
             with self.subTest(show=show):
-                response = self.client.get(f"/?show={show}")
+                response = self.client.get(self.list_url(query=f"?show={show}"))
                 self.assertEqual(
                     page_parts(response).post_actions,
                     self.forms_for(shown, f"?show={show}"),
@@ -103,10 +110,10 @@ class FilterTests(LoggedInTestCase):
 
     def test_add_keeps_the_filter(self):
         response = self.client.post(
-            reverse("todo_add") + "?show=active", {"title": "Buy milk"}
+            self.add_url() + "?show=active", {"title": "Buy milk"}
         )
         self.assertEqual(response.status_code, 302)
-        self.assertEqual(response["Location"], "/?show=active")
+        self.assertEqual(response["Location"], self.list_url(query="?show=active"))
 
     def test_toggle_keeps_the_filter(self):
         self.make_one_of_each()
@@ -114,7 +121,7 @@ class FilterTests(LoggedInTestCase):
             reverse("todo_toggle", args=[self.completed.pk]) + "?show=completed",
             {"done": "0"},
         )
-        self.assertEqual(response["Location"], "/?show=completed")
+        self.assertEqual(response["Location"], self.list_url(query="?show=completed"))
 
     def test_toggle_on_active_leaves_the_list(self):
         todo = self.make_todo(title="Buy milk")
@@ -123,7 +130,9 @@ class FilterTests(LoggedInTestCase):
             {"done": "1"},
             follow=True,
         )
-        self.assertEqual(response.redirect_chain, [("/?show=active", 302)])
+        self.assertEqual(
+            response.redirect_chain, [(self.list_url(query="?show=active"), 302)]
+        )
         self.assertEqual(page_parts(response).titles, [])
         self.assertContains(response, EMPTY_ACTIVE, count=1, html=True)
 
@@ -132,12 +141,12 @@ class FilterTests(LoggedInTestCase):
         response = self.client.post(
             reverse("todo_delete", args=[self.completed.pk]) + "?show=completed"
         )
-        self.assertEqual(response["Location"], "/?show=completed")
+        self.assertEqual(response["Location"], self.list_url(query="?show=completed"))
 
     def test_add_error_keeps_the_filter(self):
         self.make_one_of_each()
         response = self.client.post(
-            reverse("todo_add") + "?show=active",
+            self.add_url() + "?show=active",
             {"title": "New", "due_date": "not-a-date"},
         )
         self.assertEqual(response.status_code, 200)
@@ -156,11 +165,15 @@ class FilterTests(LoggedInTestCase):
             + "?show=active&next=https://evil.example",
             {"done": "1"},
         )
-        self.assertEqual(response["Location"], "/?show=active")
+        self.assertEqual(response["Location"], self.list_url(query="?show=active"))
 
     def test_no_empty_message_when_the_list_has_items(self):
         self.make_one_of_each()
-        for url in ["/", "/?show=active", "/?show=completed"]:
+        for url in [
+            self.list_url(),
+            self.list_url(query="?show=active"),
+            self.list_url(query="?show=completed"),
+        ]:
             with self.subTest(url=url):
                 response = self.client.get(url)
                 for message in EMPTY_MESSAGES:
@@ -171,20 +184,20 @@ class FilterTests(LoggedInTestCase):
 
     def test_count_shows_on_completed_view_with_nothing_completed(self):
         self.make_todo(title="Buy milk")
-        response = self.client.get("/?show=completed")
+        response = self.client.get(self.list_url(query="?show=completed"))
         self.assertEqual(page_parts(response).titles, [])
         self.assertContains(response, EMPTY_COMPLETED, count=1, html=True)
         self.assertInHTML(
-            list_footer("1 item left"), page_without_csrf(response), count=1
+            self.list_footer("1 item left"), page_without_csrf(response), count=1
         )
 
     def test_count_on_active_view_with_everything_completed(self):
         todo = self.make_todo(title="Call home", done=True)
-        response = self.client.get("/?show=active")
+        response = self.client.get(self.list_url(query="?show=active"))
         self.assertEqual(page_parts(response).titles, [])
         self.assertContains(response, EMPTY_ACTIVE, count=1, html=True)
         self.assertInHTML(
-            list_footer("0 items left", [todo.pk], "?show=active"),
+            self.list_footer("0 items left", [todo.pk], "?show=active"),
             page_without_csrf(response),
             count=1,
         )
@@ -192,29 +205,29 @@ class FilterTests(LoggedInTestCase):
     def test_delete_completed_keeps_the_filter(self):
         todo = self.make_todo(title="Call home", done=True)
         response = self.client.post(
-            reverse("todo_delete_completed") + "?show=completed", {"ids": [todo.pk]}
+            self.delete_completed_url() + "?show=completed", {"ids": [todo.pk]}
         )
         self.assertEqual(response.status_code, 302)
-        self.assertEqual(response["Location"], "/?show=completed")
+        self.assertEqual(response["Location"], self.list_url(query="?show=completed"))
         self.assertFalse(Todo.objects.exists())
 
     # Filter: protect what already works.
 
     def test_all_shows_every_todo(self):
         self.make_one_of_each()
-        for url in ["/", "/?show=all"]:
+        for url in [self.list_url(), self.list_url(query="?show=all")]:
             with self.subTest(url=url):
                 response = self.client.get(url)
                 self.assertEqual(page_parts(response).titles, ["Buy milk", "Call home"])
 
     def test_unknown_filter_shows_every_todo(self):
         self.make_one_of_each()
-        response = self.client.get("/?show=banana")
+        response = self.client.get(self.list_url(query="?show=banana"))
         self.assertEqual(response.status_code, 200)
         self.assertEqual(page_parts(response).titles, ["Buy milk", "Call home"])
 
     def test_empty_list_on_all_shows_the_old_message(self):
-        response = self.client.get("/")
+        response = self.client.get(self.list_url())
         self.assertEqual(page_parts(response).titles, [])
         self.assertContains(response, EMPTY_ALL, count=1, html=True)
 
@@ -224,7 +237,7 @@ class FilterTests(LoggedInTestCase):
         for url in [toggle, toggle + "?show=all"]:
             with self.subTest(url=url):
                 response = self.client.post(url, {"done": "1"})
-                self.assertEqual(response["Location"], "/")
+                self.assertEqual(response["Location"], self.list_url())
 
     def test_redirect_only_goes_to_the_list_page(self):
         self.make_one_of_each()
@@ -241,4 +254,4 @@ class FilterTests(LoggedInTestCase):
             with self.subTest(query=query):
                 response = self.client.post(toggle + query, {**data, "done": "1"})
                 self.assertEqual(response.status_code, 302)
-                self.assertEqual(response["Location"], "/")
+                self.assertEqual(response["Location"], self.list_url())

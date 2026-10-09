@@ -6,7 +6,7 @@ from urllib.parse import urlencode
 from django.contrib.auth import login
 from django.contrib.auth.decorators import login_not_required
 from django.contrib.auth.forms import UserCreationForm
-from django.db import DatabaseError, transaction
+from django.db import DatabaseError, IntegrityError, transaction
 from django.db.models import F, Q
 from django.db.models.functions import Lower
 from django.http import Http404, HttpResponseBadRequest
@@ -14,8 +14,8 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_http_methods, require_POST
 
-from .forms import SubtaskForm, TodoEditForm, TodoForm
-from .models import Todo
+from .forms import SubtaskForm, TodoEditForm, TodoForm, TodoListForm
+from .models import Todo, TodoList
 
 # Django refuses a form with more than 1,000 fields, and then nothing is
 # deleted. So the delete-completed button offers at most this many, oldest
@@ -195,13 +195,13 @@ def search_todos(todos, params):
     return todos.filter(title_match | notes_match).annotate(title_match=title_match)
 
 
-def filter_links(params):
+def filter_links(params, list_id):
     """The All, Active and Completed links, each one keeping the other parameters."""
     chosen = chosen_filter(params)
     return [
         {
             "label": f.label,
-            "url": reverse("todo_list")
+            "url": reverse("todo_list", args=[list_id])
             + list_query(list_params({**params, "show": f.value})),
             "current": f == chosen,
         }
@@ -214,13 +214,13 @@ def sort_todos(todos, params):
     return todos.order_by(*SORT_ORDERS[params.get("sort", DEFAULT_SORT)])
 
 
-def sort_links(params):
+def sort_links(params, list_id):
     """The Sort by links, each one keeping the other parameters."""
     chosen = params.get("sort", DEFAULT_SORT)
     return [
         {
             "label": label,
-            "url": reverse("todo_list")
+            "url": reverse("todo_list", args=[list_id])
             + list_query(list_params({**params, "sort": value})),
             "current": value == chosen,
         }
@@ -233,11 +233,11 @@ def without_selected(params):
     return {k: v for k, v in params.items() if k != "selected"}
 
 
-def select_base(params):
-    """The start of every title link: "/?show=active&selected=". The template adds the id."""
+def select_base(params, list_id):
+    """The start of every title link: "/lists/1/?show=active&selected=". The template adds the id."""
     others = without_selected(params)
     return (
-        reverse("todo_list")
+        reverse("todo_list", args=[list_id])
         + (list_query(others) + "&" if others else "?")
         + "selected="
     )
@@ -256,23 +256,41 @@ def selected_todo(todos, params):
     return next((todo for todo in todos if str(todo.pk) == wanted), None)
 
 
-def back_to_list(request):
-    """Send the browser back to the list, with the same list parameters.
+def list_url(request, list_id):
+    """The address of a list page, with the same list parameters as this request."""
+    return reverse("todo_list", args=[list_id]) + list_query(list_params(request.GET))
 
-    The address always starts from our own list page.
+
+def back_to_list(request, list_id):
+    """Send the browser back to the list `list_id`, with the same list parameters.
+
+    The address always starts from our own list page. `list_id` is a number
+    the view already has (like `todo.todo_list_id`), so no extra query.
     """
-    return redirect(reverse("todo_list") + list_query(list_params(request.GET)))
+    return redirect(list_url(request, list_id))
 
 
-def page_context(request, form):
+def get_list(request, list_id):
+    """A list this person may use, or 404."""
+    return get_object_or_404(TodoList.objects.for_user(request.user), pk=list_id)
+
+
+def get_owned_list(request, list_id):
+    """A list this person owns, or 404. For rename and delete."""
+    return get_object_or_404(TodoList.objects.owned_by(request.user), pk=list_id)
+
+
+def page_context(request, form, current_list):
     """What the list page needs. Both views use this, so a new key goes here once.
 
-    Only the person's own to-dos: every query starts with for_user.
+    Only the to-dos of the open list: every query starts with for_user, then
+    the list, and every key comes from that.
     """
     params = list_params(request.GET)
-    mine = Todo.objects.for_user(request.user)
+    list_id = current_list.pk
+    mine = Todo.objects.for_user(request.user).filter(todo_list=current_list)
     # Each to-do comes with its step counts, in the same query (no N+1).
-    todos = Todo.objects.for_user(request.user).with_subtask_progress()
+    todos = mine.with_subtask_progress()
     todos = filter_todos(todos, params)
     todos = search_todos(todos, params)
     todos = sort_todos(todos, params)
@@ -293,32 +311,62 @@ def page_context(request, form):
         ),
         "empty_message": chosen_filter(params).empty_message,
         "list_query": list_query(params),
-        "filter_links": filter_links(params),
-        "sort_links": sort_links(params),
+        "filter_links": filter_links(params, list_id),
+        "sort_links": sort_links(params, list_id),
         "selected": selected,
-        "select_base": select_base(params),
-        "close_url": reverse("todo_list") + list_query(without_selected(params)),
+        "select_base": select_base(params, list_id),
+        "close_url": reverse("todo_list", args=[list_id])
+        + list_query(without_selected(params)),
         "q": params.get("q", ""),
         "no_match_start": chosen_filter(params).no_match_start,
         "search_box_maxlength": SEARCH_BOX_MAXLENGTH,
         "search_keeps": list(without_q.items()),
-        "clear_search_url": reverse("todo_list") + list_query(without_q),
+        "clear_search_url": reverse("todo_list", args=[list_id])
+        + list_query(without_q),
+        "current_list": current_list,
+        "lists": TodoList.objects.for_user(request.user),
     }
 
 
-def todo_list(request):
-    return render(request, "todos/todo_list.html", page_context(request, TodoForm()))
+def home(request):
+    """`/`: only sends the browser to the person's first own list. A GET only reads."""
+    first = TodoList.objects.owned_by(request.user).first()
+    if first is None:
+        # A user from before lists, from createsuperuser, or who deleted
+        # every list. GET never makes anything: "New list" does.
+        return redirect("list_create")
+    return redirect("todo_list", list_id=first.pk)
+
+
+def todo_list(request, list_id):
+    current_list = get_list(request, list_id)
+    return render(
+        request,
+        "todos/todo_list.html",
+        page_context(request, TodoForm(), current_list),
+    )
 
 
 @require_POST
-def todo_add(request):
+def todo_add(request, list_id):
+    current_list = get_list(request, list_id)
     form = TodoForm(request.POST)
     if form.is_valid():
-        # The owner is never in the form: the person who adds it owns it.
-        form.instance.owner = request.user
-        form.save()
-        return back_to_list(request)
-    return render(request, "todos/todo_list.html", page_context(request, form))
+        # The list is in the address, never in the form. save() sets the
+        # owner from the list.
+        form.instance.todo_list = current_list
+        try:
+            # The database checks the list when this commits.
+            with transaction.atomic():
+                form.save()
+        except IntegrityError:
+            # Another tab deleted the list a moment ago: like a list that
+            # does not exist.
+            raise Http404("This list was deleted.") from None
+        return back_to_list(request, current_list.pk)
+    return render(
+        request, "todos/todo_list.html", page_context(request, form, current_list)
+    )
 
 
 # What the Done and Undo buttons send: the state the person wants. A second
@@ -334,7 +382,7 @@ def todo_toggle(request, pk):
     if target is None:
         return HttpResponseBadRequest("done must be 1 or 0")
     todo.set_done(target)
-    return back_to_list(request)
+    return back_to_list(request, todo.todo_list_id)
 
 
 @require_http_methods(["GET", "HEAD", "POST"])
@@ -347,8 +395,11 @@ def todo_edit(request, pk):
     """
     todo = get_object_or_404(Todo.objects.for_user(request.user), pk=pk)
     params = list_params(request.GET)
+    # Save and Cancel go back to the list the person came from, also after a
+    # move (owner decision): the to-do is gone from it, which shows it moved.
+    came_from = todo.todo_list_id
     if request.method == "POST":
-        form = TodoEditForm(request.POST, instance=todo)
+        form = TodoEditForm(request.POST, instance=todo, user=request.user)
         if form.is_valid():
             edited = form.save(commit=False)
             edited.edited = True  # Undo never deletes a to-do a person edited
@@ -362,9 +413,9 @@ def todo_edit(request, pk):
             except DatabaseError:
                 raise Http404("This to-do was deleted.") from None
             form.save_m2m()
-            return back_to_list(request)
+            return back_to_list(request, came_from)
     else:
-        form = TodoEditForm(instance=todo)
+        form = TodoEditForm(instance=todo, user=request.user)
     return render(
         request,
         "todos/todo_edit.html",
@@ -372,7 +423,7 @@ def todo_edit(request, pk):
             "pk": pk,
             "form": form,
             "list_query": list_query(params),
-            "list_url": reverse("todo_list") + list_query(params),
+            "list_url": list_url(request, came_from),
         },
     )
 
@@ -380,19 +431,115 @@ def todo_edit(request, pk):
 @require_POST
 def todo_delete(request, pk):
     todo = get_object_or_404(Todo.objects.for_user(request.user), pk=pk)
+    list_id = todo.todo_list_id  # kept: after delete() the to-do is gone
     todo.delete()
-    return back_to_list(request)
+    return back_to_list(request, list_id)
 
 
 @require_POST
-def todo_delete_completed(request):
+def todo_delete_completed(request, list_id):
     """Delete the completed to-dos whose ids the page sent, and only those."""
     ids = [pk for value in request.POST.getlist("ids") if (pk := clean_id(value))]
     # One delete for all of them. Django also deletes their steps (CASCADE),
     # in one more query. Never delete them one by one in a loop.
     # Only the person's own: another person's ids delete nothing.
-    Todo.objects.for_user(request.user).completed().filter(pk__in=ids).delete()
-    return back_to_list(request)
+    # Only this list's: an id from another list is ignored, even the person's own.
+    current_list = get_list(request, list_id)
+    Todo.objects.for_user(request.user).filter(
+        todo_list=current_list
+    ).completed().filter(pk__in=ids).delete()
+    return back_to_list(request, current_list.pk)
+
+
+# Lists (13): make, rename and delete. Rename and delete are owner-only
+# (get_owned_list). There is no "all lists" page: the lists <nav> on the list
+# page is the index.
+
+
+def came_from_list(request):
+    """The list "New list" was opened from (`?from=<id>`), only if this person
+    may use it; else None. Never an address from the request: only an id.
+    """
+    list_id = clean_id(request.GET.get("from"))
+    if list_id is None:
+        return None
+    return TodoList.objects.for_user(request.user).filter(pk=list_id).first()
+
+
+def list_form_page(request, form, current_list=None):
+    """The "New list" page (no current_list) or the "Rename or delete" page."""
+    context = {"form": form, "current_list": current_list}
+    if current_list is None:
+        came_from = came_from_list(request)
+        # The form posts to the same address, so Cancel still knows after an error.
+        context["from_query"] = list_query({"from": came_from.pk}) if came_from else ""
+        if came_from is not None:
+            context["cancel_url"] = reverse("todo_list", args=[came_from.pk])
+        elif TodoList.objects.for_user(request.user).exists():
+            context["cancel_url"] = reverse("home")
+        else:
+            # No Cancel without a list: "/" would come back here.
+            context["cancel_url"] = None
+    else:
+        context["cancel_url"] = reverse("todo_list", args=[current_list.pk])
+        # For the delete button: "Delete list and its 3 to-dos". One COUNT.
+        context["todo_count"] = current_list.todos.count()
+    return render(request, "todos/list_form.html", context)
+
+
+def posted(request):
+    """The form data on a POST, else None. An empty POST is still a POST: its
+    form shows "This field is required." (`request.POST or None` would not).
+    """
+    return request.POST if request.method == "POST" else None
+
+
+def save_list(form):
+    """Save a good list form; the list, or None.
+
+    Two requests with the same new name can both pass clean_name. Then the
+    database refuses the second one (the unique constraint), and the form
+    shows the same message as clean_name.
+    """
+    try:
+        with transaction.atomic():
+            return form.save()
+    except IntegrityError:
+        name = form.cleaned_data["name"]
+        form.add_error("name", TodoListForm.name_used_message(name))
+        return None
+
+
+@require_http_methods(["GET", "HEAD", "POST"])
+def list_create(request):
+    form = TodoListForm(posted(request), owner=request.user)
+    if request.method == "POST" and form.is_valid():
+        form.instance.owner = request.user  # never from the form
+        new_list = save_list(form)
+        if new_list is not None:
+            return redirect("todo_list", list_id=new_list.pk)
+    return list_form_page(request, form)
+
+
+@require_http_methods(["GET", "HEAD", "POST"])
+def list_edit(request, list_id):
+    """GET: the rename form and the delete button. POST: rename."""
+    current_list = get_owned_list(request, list_id)
+    form = TodoListForm(posted(request), instance=current_list, owner=request.user)
+    if request.method == "POST" and form.is_valid() and save_list(form):
+        return redirect("todo_list", list_id=current_list.pk)
+    if form.errors:
+        # The heading and Cancel keep the saved name, not the one typed.
+        current_list.refresh_from_db()
+    return list_form_page(request, form, current_list)
+
+
+@require_POST
+def list_delete(request, list_id):
+    """Delete the list AND its to-dos (owner decision; CASCADE). The button said how many."""
+    current_list = get_owned_list(request, list_id)
+    current_list.delete()
+    return redirect("home")
 
 
 # Steps (subtasks): each to-do's own small page, /<id>/subtasks/.
@@ -416,7 +563,7 @@ def subtask_page(request, todo, subtask_form):
             "subtasks": todo.subtasks.all(),
             "subtask_form": subtask_form,
             "list_query": list_query(params),
-            "list_url": reverse("todo_list") + list_query(params),
+            "list_url": list_url(request, todo.todo_list_id),
         },
     )
 
@@ -494,9 +641,13 @@ def signup(request):
     settings.py (too short, too common, only numbers, too like the username).
     """
     if request.user.is_authenticated:
-        return redirect("todo_list")
+        return redirect("home")
     form = UserCreationForm(request.POST or None)
     if request.method == "POST" and form.is_valid():
-        login(request, form.save())
-        return redirect("todo_list")
+        # All of it, or nothing: never a user without their first list.
+        with transaction.atomic():
+            user = form.save()
+            TodoList.objects.create_default(user)
+        login(request, user)
+        return redirect("home")
     return render(request, "registration/signup.html", {"form": form})

@@ -9,6 +9,7 @@ from django.utils import timezone
 from todos.models import Todo
 from todos.tests.integration.helpers import (
     LoggedInTestCase,
+    list_path,
     page_parts,
     pane_element,
     show_date,
@@ -37,8 +38,8 @@ LINKS = [
 CURRENT = ' aria-current="true"'
 
 
-def nav(chosen, selected=None):
-    """The whole sort <nav>, with `chosen` marked.
+def nav(chosen, selected=None, *, list_id):
+    """The whole sort <nav> of the list `list_id`, with `chosen` marked.
 
     `selected` is the id of the selected to-do: every link keeps it, last.
     """
@@ -47,7 +48,7 @@ def nav(chosen, selected=None):
         params = [] if value == "created" else [f"sort={value}"]
         if selected is not None:
             params.append(f"selected={selected}")
-        href = "/" + ("?" + "&amp;".join(params) if params else "")
+        href = list_path(list_id) + ("?" + "&amp;".join(params) if params else "")
         mark = CURRENT if value == chosen else ""
         links += f'<a href="{href}"{mark}>{label}</a>'
     return NAV.format(links=links)
@@ -79,24 +80,29 @@ class SortTests(LoggedInTestCase):
         self.make("No date")
         self.make("Later", due_date=date(2026, 10, 20))
         self.make("Soon", due_date=date(2026, 10, 12))
-        self.assertEqual(self.titles("/?sort=due"), ["Soon", "Later", "No date"])
+        self.assertEqual(
+            self.titles(self.list_url(query="?sort=due")), ["Soon", "Later", "No date"]
+        )
 
     def test_due_date_ties_go_high_priority_first(self):
         self.make("Low", due_date=date(2026, 10, 12), priority=LOW)
         self.make("High", due_date=date(2026, 10, 12), priority=HIGH)
-        self.assertEqual(self.titles("/?sort=due"), ["High", "Low"])
+        self.assertEqual(self.titles(self.list_url(query="?sort=due")), ["High", "Low"])
 
     def test_due_and_priority_ties_keep_date_added_order(self):
         b = self.make("B", due_date=date(2026, 10, 12))
         a = self.make("A", due_date=date(2026, 10, 12))
         make_earlier(a, than=b)  # id order: B, A. Date added: A, B.
-        self.assertEqual(self.titles("/?sort=due"), ["A", "B"])
+        self.assertEqual(self.titles(self.list_url(query="?sort=due")), ["A", "B"])
 
     def test_sort_by_priority(self):
         self.make("Low", priority=LOW)
         self.make("Medium", priority=MEDIUM)
         self.make("High", priority=HIGH)
-        self.assertEqual(self.titles("/?sort=priority"), ["High", "Medium", "Low"])
+        self.assertEqual(
+            self.titles(self.list_url(query="?sort=priority")),
+            ["High", "Medium", "Low"],
+        )
 
     def test_priority_ties_go_soonest_due_first(self):
         self.make("Low", priority=LOW)
@@ -104,7 +110,7 @@ class SortTests(LoggedInTestCase):
         self.make("High later", priority=HIGH, due_date=date(2026, 10, 20))
         self.make("High soon", priority=HIGH, due_date=date(2026, 10, 12))
         self.assertEqual(
-            self.titles("/?sort=priority"),
+            self.titles(self.list_url(query="?sort=priority")),
             ["High soon", "High later", "High no date", "Low"],
         )
 
@@ -112,58 +118,76 @@ class SortTests(LoggedInTestCase):
         b = self.make("B", priority=HIGH)
         a = self.make("A", priority=HIGH)
         make_earlier(a, than=b)  # id order: B, A. Date added: A, B.
-        self.assertEqual(self.titles("/?sort=priority"), ["A", "B"])
+        self.assertEqual(self.titles(self.list_url(query="?sort=priority")), ["A", "B"])
 
     def test_sort_by_title_ignores_case(self):
         self.make("cherry")
         self.make("Banana")
         self.make("apple")
-        self.assertEqual(self.titles("/?sort=title"), ["apple", "Banana", "cherry"])
+        self.assertEqual(
+            self.titles(self.list_url(query="?sort=title")),
+            ["apple", "Banana", "cherry"],
+        )
 
     def test_title_ties_keep_date_added_order(self):
         b = self.make("Buy milk")
         a = self.make("buy milk")
         make_earlier(a, than=b)  # id order: B, A. Date added: A, B.
         self.make("apple")
-        self.assertEqual(self.titles("/?sort=title"), ["apple", "buy milk", "Buy milk"])
+        self.assertEqual(
+            self.titles(self.list_url(query="?sort=title")),
+            ["apple", "buy milk", "Buy milk"],
+        )
 
     def test_sort_by_title_hiragana(self):
         self.make("うどん")
         self.make("いちご")
         self.make("あめ")
-        self.assertEqual(self.titles("/?sort=title"), ["あめ", "いちご", "うどん"])
+        self.assertEqual(
+            self.titles(self.list_url(query="?sort=title")),
+            ["あめ", "いちご", "うどん"],
+        )
 
     def test_sort_links_are_on_the_page(self):
-        response = self.client.get("/")
-        self.assertContains(response, nav("created"), count=1, html=True)
+        response = self.client.get(self.list_url())
+        self.assertContains(
+            response, nav("created", list_id=self.todo_list.pk), count=1, html=True
+        )
 
     def test_chosen_sort_is_marked(self):
         for url, chosen in [
-            ("/?sort=priority", "priority"),
-            ("/?sort=banana", "created"),
+            (self.list_url(query="?sort=priority"), "priority"),
+            (self.list_url(query="?sort=banana"), "created"),
         ]:
             with self.subTest(url=url):
                 response = self.client.get(url)
-                self.assertContains(response, nav(chosen), count=1, html=True)
+                self.assertContains(
+                    response, nav(chosen, list_id=self.todo_list.pk), count=1, html=True
+                )
                 # The filter's mark is not changed: only All has "page".
                 self.assertEqual(page_parts(response).current_links, ["All"])
 
     def test_sort_row_stays_when_the_pane_is_open(self):
         todo = self.make("Buy milk")
-        response = self.client.get(f"/?sort=priority&selected={todo.pk}")
+        response = self.client.get(
+            self.list_url(query=f"?sort=priority&selected={todo.pk}")
+        )
         self.assertEqual(page_parts(response).panes, ["Details"])
         self.assertContains(
-            response, nav("priority", selected=todo.pk), count=1, html=True
+            response,
+            nav("priority", selected=todo.pk, list_id=self.todo_list.pk),
+            count=1,
+            html=True,
         )
 
     def test_pane_keeps_the_sort(self):
         todo = self.make("Buy milk")
-        response = self.client.get(f"/?sort=due&selected={todo.pk}")
+        response = self.client.get(self.list_url(query=f"?sort=due&selected={todo.pk}"))
         todo.refresh_from_db()
         pane = pane_element(
             todo,
             created=show_date(timezone.localtime(todo.created_at)),
-            close_url="/?sort=due",
+            close_url=self.list_url(query="?sort=due"),
             edit_url=f"/{todo.pk}/edit/?sort=due&selected={todo.pk}",
         )
         self.assertContains(response, pane, count=1, html=True)
@@ -172,7 +196,9 @@ class SortTests(LoggedInTestCase):
         todo = self.make("Buy milk")
         response = self.client.get(f"/{todo.pk}/edit/?show=active&sort=due")
         self.assertContains(
-            response, '<a href="/?show=active&amp;sort=due">Cancel</a>', html=True
+            response,
+            f'<a href="{self.list_url()}?show=active&amp;sort=due">Cancel</a>',
+            html=True,
         )
 
     def test_every_sort_is_one_list_query(self):
@@ -180,11 +206,11 @@ class SortTests(LoggedInTestCase):
         self.make("High", priority=HIGH)
         self.make("Medium", done=True)
         with CaptureQueriesContext(connection) as plain:
-            self.client.get("/")
+            self.client.get(self.list_url())
         for value, _label, _order in SORTS:
             with self.subTest(sort=value):
                 with CaptureQueriesContext(connection) as sorted_page:
-                    response = self.client.get(f"/?sort={value}")
+                    response = self.client.get(self.list_url(query=f"?sort={value}"))
                 self.assertEqual(len(sorted_page), len(plain))
                 # The database sorts. Sorting in Python (sorted()) costs no
                 # extra query, but it turns the list into a Python list.
@@ -192,16 +218,16 @@ class SortTests(LoggedInTestCase):
 
     def test_sort_is_kept_everywhere(self):
         todo = self.make("Buy milk")
-        response = self.client.get("/?show=active&q=milk&sort=due")
+        response = self.client.get(self.list_url(query="?show=active&q=milk&sort=due"))
         query = "?show=active&q=milk&sort=due"
         parts = [
-            '<a href="/?show=active&amp;q=milk&amp;sort=due" '
+            f'<a href="{self.list_url()}?show=active&amp;q=milk&amp;sort=due" '
             'aria-current="page">Active</a>',
             '<input type="hidden" name="sort" value="due">',
-            '<a href="/?show=active&amp;sort=due">Clear search</a>',
+            f'<a href="{self.list_url()}?show=active&amp;sort=due">Clear search</a>',
             f'<a class="edit" href="/{todo.pk}/edit/?show=active&amp;q=milk&amp;'
             'sort=due" aria-label="Edit Buy milk">Edit</a>',
-            '<a href="/?show=active&amp;q=milk&amp;sort=title">Title</a>',
+            f'<a href="{self.list_url()}?show=active&amp;q=milk&amp;sort=title">Title</a>',
             title_element(todo, query),
         ]
         for part in parts:
@@ -212,14 +238,14 @@ class SortTests(LoggedInTestCase):
         active = self.make("Buy milk")
         self.make("Call home", done=True)
         query = "?show=active&sort=title"
-        response = self.client.get("/" + query)
+        response = self.client.get(self.list_url() + query)
         self.assertEqual(
             page_parts(response).post_actions,
             [
-                reverse("todo_add") + query,
+                self.add_url() + query,
                 reverse("todo_toggle", args=[active.pk]) + query,
                 reverse("todo_delete", args=[active.pk]) + query,
-                reverse("todo_delete_completed") + query,
+                self.delete_completed_url() + query,
             ],
         )
 
@@ -230,7 +256,7 @@ class SortTests(LoggedInTestCase):
         cases = [
             ("toggle", reverse("todo_toggle", args=[todo.pk]), {"done": "1"}),
             ("delete", reverse("todo_delete", args=[other.pk]), {}),
-            ("add", reverse("todo_add"), {"title": "New"}),
+            ("add", self.add_url(), {"title": "New"}),
             (
                 "edit",
                 reverse("todo_edit", args=[todo.pk]),
@@ -241,7 +267,7 @@ class SortTests(LoggedInTestCase):
             with self.subTest(name=name):
                 response = self.client.post(url + query, data)
                 self.assertEqual(response.status_code, 302)
-                self.assertEqual(response["Location"], "/" + query)
+                self.assertEqual(response["Location"], self.list_url() + query)
 
     def test_sort_filter_and_search_together(self):
         self.make("Milk later", due_date=date(2026, 10, 20))
@@ -249,7 +275,8 @@ class SortTests(LoggedInTestCase):
         self.make("Call home", due_date=date(2026, 10, 5))
         self.make("Milk soon", due_date=date(2026, 10, 12))
         self.assertEqual(
-            self.titles("/?show=active&q=milk&sort=due"), ["Milk soon", "Milk later"]
+            self.titles(self.list_url(query="?show=active&q=milk&sort=due")),
+            ["Milk soon", "Milk later"],
         )
 
     def test_completed_go_last_in_every_sort(self):
@@ -308,7 +335,9 @@ class SortTests(LoggedInTestCase):
                 Todo.objects.all().delete()
                 for title, fields in todos:
                     self.make(title, **fields)
-                self.assertEqual(self.titles(f"/?sort={value}"), expected)
+                self.assertEqual(
+                    self.titles(self.list_url(query=f"?sort={value}")), expected
+                )
 
     # Sort: protect what already works.
 
@@ -319,7 +348,11 @@ class SortTests(LoggedInTestCase):
         c = self.make("C")
         make_earlier(a, than=b)
         make_earlier(c, than=a)
-        for url in ["/", "/?sort=created", "/?sort=banana"]:
+        for url in [
+            self.list_url(),
+            self.list_url(query="?sort=created"),
+            self.list_url(query="?sort=banana"),
+        ]:
             with self.subTest(url=url):
                 self.assertEqual(self.titles(url), ["C", "A", "B"])
 
@@ -334,4 +367,4 @@ class SortTests(LoggedInTestCase):
             with self.subTest(query=query):
                 response = self.client.post(toggle + query, {"done": "1"})
                 self.assertEqual(response.status_code, 302)
-                self.assertEqual(response["Location"], "/")
+                self.assertEqual(response["Location"], self.list_url())

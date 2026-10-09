@@ -1,10 +1,15 @@
 from datetime import date
 
+from django.contrib.auth import get_user_model
 from django.test import SimpleTestCase
 from django.utils import translation
 
 from todos import forms
 from todos.models import Todo
+
+# A user that is never saved: the edit form only needs their id, to choose
+# their lists (lists, 13). SimpleTestCase has no database.
+SOMEONE = get_user_model()(pk=1)
 
 
 class EditFormTests(SimpleTestCase):
@@ -17,10 +22,10 @@ class EditFormTests(SimpleTestCase):
             for field in Todo._meta.get_fields()
             if getattr(field, "editable", False) and not field.auto_created
         } - {"done", "owner"}
-        self.assertEqual(set(forms.TodoEditForm().fields), expected)
+        self.assertEqual(set(forms.TodoEditForm(user=SOMEONE).fields), expected)
 
     def test_edit_form_does_not_change_the_add_form(self):
-        forms.TodoEditForm()
+        forms.TodoEditForm(user=SOMEONE)
         add_form = forms.TodoForm()
         expected = {
             "title": {

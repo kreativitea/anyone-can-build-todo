@@ -7,7 +7,7 @@ from pathlib import Path
 from django.test import SimpleTestCase, TestCase
 
 from todos.models import Todo
-from todos.tests.integration.helpers import make_user
+from todos.tests.integration.helpers import first_list, make_user
 
 
 class OwnerModelTests(TestCase):
@@ -15,29 +15,34 @@ class OwnerModelTests(TestCase):
     def setUpTestData(cls):
         cls.ana = make_user("ana")
         cls.ben = make_user("ben")
+        cls.anas_list = first_list(cls.ana)
+        cls.bens_list = first_list(cls.ben)
 
     def test_for_user_gives_only_their_todos(self):
-        milk = Todo.objects.create(owner=self.ana, title="Buy milk")
-        home = Todo.objects.create(owner=self.ana, title="Call home")
-        Todo.objects.create(owner=self.ben, title="Ben's secret")
+        milk = Todo.objects.create(todo_list=self.anas_list, title="Buy milk")
+        home = Todo.objects.create(todo_list=self.anas_list, title="Call home")
+        Todo.objects.create(todo_list=self.bens_list, title="Ben's secret")
         self.assertEqual(list(Todo.objects.for_user(self.ana)), [milk, home])
 
     def test_next_repeat_keeps_the_owner(self):
         bins = Todo.objects.create(
-            owner=self.ben, title="Bins", repeat="weekly", due_date=date(2026, 10, 12)
+            todo_list=self.bens_list,
+            title="Bins",
+            repeat="weekly",
+            due_date=date(2026, 10, 12),
         )
         self.assertEqual(bins.next_copy().owner, self.ben)
 
     def test_deleting_a_user_deletes_their_todos(self):
-        milk = Todo.objects.create(owner=self.ana, title="Buy milk")
-        Todo.objects.create(owner=self.ben, title="Ben's secret")
+        milk = Todo.objects.create(todo_list=self.anas_list, title="Buy milk")
+        Todo.objects.create(todo_list=self.bens_list, title="Ben's secret")
         self.ben.delete()
         self.assertEqual(list(Todo.objects.all()), [milk])
 
     # Defence in depth: the model's own UPDATE and DELETE also ask for the owner.
 
     def test_mark_edited_changes_only_a_row_of_the_same_owner(self):
-        milk = Todo.objects.create(owner=self.ana, title="Buy milk")
+        milk = Todo.objects.create(todo_list=self.anas_list, title="Buy milk")
         stale = Todo.objects.get(pk=milk.pk)
         stale.owner_id = self.ben.pk  # an object that does not match its row
         stale.mark_edited()
@@ -49,7 +54,10 @@ class OwnerModelTests(TestCase):
 
     def test_undo_never_deletes_a_copy_of_another_person(self):
         bins = Todo.objects.create(
-            owner=self.ana, title="Bins", repeat="weekly", due_date=date(2026, 10, 12)
+            todo_list=self.anas_list,
+            title="Bins",
+            repeat="weekly",
+            due_date=date(2026, 10, 12),
         )
         bins.set_done(True)
         bins.refresh_from_db()
@@ -63,7 +71,15 @@ class OwnerModelTests(TestCase):
 # A to-do query that does not start from the owner. `Todo.objects` must go on
 # with `.for_user(`; a step is never asked for directly (always through its
 # to-do: `todo.subtasks`); no generic view or form is built on the models.
+# Lists (13): `TodoList.objects` goes on with `.for_user(` (lists a person may
+# use), `.owned_by(` (owner-only actions) or `.create_default(` (sign-up).
+# Never a raw owner filter: sharing (20) replaces for_user, and must find
+# every caller.
 UNSCOPED = [
+    re.compile(r"\bTodoList\.objects\b(?!\.(for_user|owned_by|create_default)\()"),
+    re.compile(r"\bTodoList\._(default|base)_manager\b"),
+    re.compile(r"get_object_or_404\(\s*TodoList\b(?!\.objects\.(for_user|owned_by)\()"),
+    re.compile(r"get_list_or_404\(\s*TodoList\b(?!\.objects\.(for_user|owned_by)\()"),
     re.compile(r"\bTodo\.objects\b(?!\.for_user\()"),
     re.compile(r"\bTodo\._(default|base)_manager\b"),
     re.compile(r"\bSubtask\.objects\b"),
@@ -72,7 +88,9 @@ UNSCOPED = [
     re.compile(r"get_object_or_404\(\s*Subtask\b"),
     re.compile(r"get_list_or_404\(\s*Todo\b(?!\.objects\.for_user\()"),
     re.compile(r"get_list_or_404\(\s*Subtask\b"),
-    re.compile(r"\bmodel\s*=\s*(Todo|Subtask)\b"),
+    re.compile(r"\bmodel\s*=\s*(Todo|Subtask|TodoList)\b"),
+    # A model looked up by name skips every check above (only data migrations may).
+    re.compile(r"\bget_model\("),
     re.compile(r"\.model\.objects\b"),
 ]
 
@@ -98,8 +116,14 @@ ALLOWED = {
     # The ModelForms' Meta: a form reads no rows (the owner is never a field).
     ("todos/forms.py", "model = Todo"),
     ("todos/forms.py", "model = Subtask"),
+    ("todos/forms.py", "model = TodoList"),
     # A data migration runs once, on every row, before anyone is logged in.
     ("todos/data_migrations.py", "Todo.objects.filter(owner__isnull=True).delete()"),
+    ("todos/data_migrations.py", 'Todo = apps.get_model("todos", "Todo")'),
+    (
+        "todos/data_migrations.py",
+        "Todo.objects.filter(todo_list__isnull=True).delete()",
+    ),
     # The admin: staff see every to-do on purpose.
     ("todos/admin.py", "model = Subtask"),
 }
@@ -173,6 +197,15 @@ class OwnerGuardTests(SimpleTestCase):
             "steps = get_list_or_404(Subtask, todo=todo)",
             "todos = get_list_or_404(Todo, done=True)",
             "steps = todo.subtasks.model.objects.all()",
+            "lists = TodoList.objects.all()",
+            "lists = TodoList.objects.filter(owner=request.user)",
+            "todo_list = get_object_or_404(TodoList, pk=list_pk, owner=request.user)",
+            "TodoList._default_manager.get(pk=list_id)",
+            "lists = get_list_or_404(TodoList, owner=user)",
+            "    model = TodoList",
+            "class ListDetail(DetailView): model = TodoList",
+            'TodoList = apps.get_model("todos", "TodoList")',
+            'lists = django_apps.get_model("todos.TodoList").objects.all()',
         ]:
             with self.subTest(line=line):
                 self.assertTrue(any(p.search(line) for p in UNSCOPED))
@@ -182,7 +215,11 @@ class OwnerGuardTests(SimpleTestCase):
             "step = get_object_or_404(todo.subtasks, pk=subtask_pk)",
             "SEARCH_MAX_LENGTH = Todo._meta.get_field('title').max_length",
             "todos = get_list_or_404(Todo.objects.for_user(request.user))",
-            "model = TodoList",
+            "lists = TodoList.objects.for_user(request.user)",
+            "first = TodoList.objects.owned_by(request.user).first()",
+            "TodoList.objects.create_default(user)",
+            "get_object_or_404(TodoList.objects.for_user(request.user), pk=list_id)",
+            "get_object_or_404(TodoList.objects.owned_by(request.user), pk=list_id)",
         ]:
             with self.subTest(line=line):
                 self.assertFalse(any(p.search(line) for p in UNSCOPED))

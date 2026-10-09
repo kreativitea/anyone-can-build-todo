@@ -1,6 +1,6 @@
 from django import forms
 
-from .models import Subtask, Todo
+from .models import Subtask, Todo, TodoList, list_name_key
 
 
 class NotesField(forms.CharField):
@@ -87,6 +87,46 @@ class TodoForm(forms.ModelForm):
         return bool(getattr(self, "cleaned_data", {}).get("notes"))
 
 
+class TodoListForm(forms.ModelForm):
+    """The name of a list, on the "New list" and "Rename or delete" pages.
+
+    `owner` is keyword-only: forgetting it is an error at once. The owner is
+    never a field: the view sets it.
+    """
+
+    class Meta:
+        model = TodoList
+        fields = [
+            "name",
+        ]
+        widgets = {
+            "name": forms.TextInput(attrs={"autofocus": True}),
+        }
+
+    def __init__(self, *args, owner, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.owner = owner
+
+    def clean_name(self):
+        """One person cannot have two lists with the same name: the same
+        `name_key` (NFKC, then casefold), like the database constraint.
+
+        Django skips the database constraint here (`owner` is not a field), so
+        the form checks it. The constraint is the safety net.
+        """
+        name = self.cleaned_data["name"]
+        same = TodoList.objects.owned_by(self.owner).filter(
+            name_key=list_name_key(name)
+        )
+        if same.exclude(pk=self.instance.pk).exists():
+            raise forms.ValidationError(self.name_used_message(name))
+        return name
+
+    @staticmethod
+    def name_used_message(name):
+        return f'You already have a list called "{name}".'
+
+
 class SubtaskForm(forms.ModelForm):
     """The "New step" box on the steps page. Django checks: not empty, at most 200."""
 
@@ -105,15 +145,32 @@ class SubtaskForm(forms.ModelForm):
 
 
 class TodoEditForm(TodoForm):
-    """The add form, for a to-do that already exists. Every field of TodoForm is here too.
+    """The add form, for a to-do that already exists. Every field of TodoForm is here too,
+    and the list it is in (to move it).
 
     On this page every box has a visible label, so the hidden names and hints go.
+    `user` is keyword-only: forgetting it is an error at once.
     """
 
-    def __init__(self, *args, **kwargs):
+    class Meta(TodoForm.Meta):
+        fields = TodoForm.Meta.fields + ["todo_list"]
+
+    def __init__(self, *args, user, **kwargs):
         super().__init__(*args, **kwargs)
+        # Only this person's lists: the box shows only these, and any other id
+        # that is posted is refused ("Select a valid choice").
+        self.fields["todo_list"].queryset = TodoList.objects.for_user(user)
+        # A to-do is always in a list: no "---------" choice.
+        self.fields["todo_list"].empty_label = None
+        # A browser always sends the box. A hand-made post without it keeps
+        # the to-do where it is, like a missing priority is Medium.
+        self.fields["todo_list"].required = False
         # self.fields is this form's own copy. Never change self.base_fields:
         # some of those field objects are shared with TodoForm (the add form).
         for field in self.fields.values():
             field.widget.attrs.pop("aria-label", None)
             field.widget.attrs.pop("placeholder", None)
+
+    def clean_todo_list(self):
+        """The chosen list, or (when the post has none) the list it is in now."""
+        return self.cleaned_data["todo_list"] or self.instance.todo_list

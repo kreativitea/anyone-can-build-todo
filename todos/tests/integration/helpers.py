@@ -12,7 +12,7 @@ from django.contrib.auth import get_user_model
 from django.test import Client, TestCase
 from django.utils.html import escape
 
-from todos.models import Todo
+from todos.models import Todo, TodoList
 
 # A test value only, for test users. Not a real password.
 TEST_PASSWORD = "plum-tree-river-42"
@@ -24,17 +24,34 @@ LOGOUT_URL = "/accounts/logout/"
 
 
 def make_user(username="ana"):
-    """A saved user with the test password."""
-    return get_user_model().objects.create_user(username, password=TEST_PASSWORD)
+    """A saved user with the test password, and their first list "My to-dos",
+    like sign-up gives (lists, 13).
+    """
+    user = get_user_model().objects.create_user(username, password=TEST_PASSWORD)
+    TodoList.objects.create_default(user)
+    return user
+
+
+def first_list(user):
+    """The person's first list: "My to-dos" for a user from make_user."""
+    return TodoList.objects.owned_by(user).first()
+
+
+def list_path(list_id, query=""):
+    """The address of a list page, like "/lists/1/?show=active"."""
+    return f"/lists/{list_id}/{query}"
 
 
 class LoggedInTestCase(TestCase):
-    """A test where "ana" is logged in. self.make_todo() makes her to-dos."""
+    """A test where "ana" is logged in. self.make_todo() makes her to-dos, in
+    her list "My to-dos" (`cls.todo_list`) unless `todo_list` says otherwise.
+    """
 
     @classmethod
     def setUpTestData(cls):
         super().setUpTestData()
         cls.user = make_user("ana")
+        cls.todo_list = first_list(cls.user)
 
     def setUp(self):
         super().setUp()
@@ -46,10 +63,35 @@ class LoggedInTestCase(TestCase):
         client.force_login(self.user)
         return client
 
-    def make_todo(self, **fields):
-        """A saved to-do, owned by ana unless `owner` says otherwise."""
-        fields.setdefault("owner", self.user)
-        return Todo.objects.create(**fields)
+    def make_todo(self, todo_list=None, **fields):
+        """A saved to-do in `todo_list`, or in ana's "My to-dos". The owner
+        follows the list (Todo.save).
+        """
+        return Todo.objects.create(todo_list=todo_list or self.todo_list, **fields)
+
+    def list_url(self, todo_list=None, query=""):
+        """The address of a list page: ana's "My to-dos" unless `todo_list` says
+        otherwise, then `query` (like "?show=active").
+        """
+        return list_path((todo_list or self.todo_list).pk, query)
+
+    def add_url(self, todo_list=None, query=""):
+        """The add form's address, for a list (ana's "My to-dos" by default)."""
+        return list_path((todo_list or self.todo_list).pk, f"add/{query}")
+
+    def delete_completed_url(self, todo_list=None, query=""):
+        """The delete-completed address, for a list (ana's "My to-dos" by default)."""
+        return list_path((todo_list or self.todo_list).pk, f"delete-completed/{query}")
+
+    def list_footer(self, count_text, completed_ids=(), query="", todo_list=None):
+        """list_footer() for a list: ana's "My to-dos" by default."""
+        list_id = (todo_list or self.todo_list).pk
+        return list_footer(count_text, completed_ids, query, list_id=list_id)
+
+    def delete_completed_form(self, ids, query="", todo_list=None):
+        """delete_completed_form() for a list: ana's "My to-dos" by default."""
+        list_id = (todo_list or self.todo_list).pk
+        return delete_completed_form(ids, query, list_id=list_id)
 
 
 CSRF_INPUT = re.compile(
@@ -77,8 +119,8 @@ def page_without_csrf(response):
     return CSRF_INPUT.sub("", response.content.decode())
 
 
-def delete_completed_form(ids, query=""):
-    """The delete-completed form, exactly as the page must show it.
+def delete_completed_form(ids, query="", *, list_id):
+    """The delete-completed form of the list `list_id`, exactly as the page must show it.
 
     `query` is the list query at the end of its address, like "?show=active".
     """
@@ -86,7 +128,7 @@ def delete_completed_form(ids, query=""):
     count = len(ids)
     return (
         '<form class="delete-completed" method="post" '
-        f'action="/delete-completed/{query}">'
+        f'action="/lists/{list_id}/delete-completed/{query}">'
         f"{hidden}"
         f'<button type="submit">Delete {count} completed to-do'
         f"{'' if count == 1 else 's'}</button>"
@@ -94,9 +136,13 @@ def delete_completed_form(ids, query=""):
     )
 
 
-def list_footer(count_text, completed_ids=(), query=""):
-    """The whole footer under the list, exactly as the page must show it."""
-    form = delete_completed_form(completed_ids, query) if completed_ids else ""
+def list_footer(count_text, completed_ids=(), query="", *, list_id=None):
+    """The whole footer under the list `list_id`, exactly as the page must show it."""
+    form = (
+        delete_completed_form(completed_ids, query, list_id=list_id)
+        if completed_ids
+        else ""
+    )
     return f'<div class="list-footer"><p class="count">{count_text}</p>{form}</div>'
 
 
@@ -326,8 +372,10 @@ class PageParts(HTMLParser):
     `titles` is the title of every to-do shown, in order: the text of each
     <span class="title">, and of an <a> directly inside it (the title link).
     Other tags inside the span (the due date is a <small>) are not the title.
-    `current_links` is the text of every link with aria-current="page". A test
-    that compares it to one name proves that no OTHER link is marked too.
+    `current_links` is the text of every link with aria-current="page", except
+    in the lists <nav> (lists, 13). A test that compares it to one name proves
+    that no OTHER link is marked too. `current_lists` is the same for the
+    lists <nav>: the open list.
     `selected_titles` is the text of every title link with aria-current="true":
     the selected to-do. Sort links use "true" too, but they are not titles.
     `panes` is the aria-label of every <aside>, in order. [] means "no pane".
@@ -349,6 +397,8 @@ class PageParts(HTMLParser):
         self.html_lang = None
         self.titles = []
         self.current_links = []
+        self.current_lists = []
+        self._in_lists_nav = False
         self.selected_titles = []
         self.panes = []
         self.pane_notes = None
@@ -382,9 +432,12 @@ class PageParts(HTMLParser):
             self.titles.append("")
             self._collect = [self.titles]
             self._title_depth = 0
+        if tag == "nav" and attrs.get("class") == "lists":
+            self._in_lists_nav = True
         if tag == "a" and attrs.get("aria-current") == "page":
-            self.current_links.append("")
-            self._collect = [self.current_links]
+            marked = self.current_lists if self._in_lists_nav else self.current_links
+            marked.append("")
+            self._collect = [marked]
         if tag == "aside":
             self.panes.append(attrs.get("aria-label"))
 
@@ -405,6 +458,8 @@ class PageParts(HTMLParser):
     def handle_endtag(self, tag):
         if tag == "aside":
             self._in_pane = False
+        if tag == "nav":
+            self._in_lists_nav = False
         if tag == "dd":
             self._in_notes = False
         self._collect = []
@@ -457,7 +512,7 @@ def title_element(
     title block), or "" for a to-do with no steps.
     """
     joiner = "&" if query else "?"
-    href = f"/{escape(query)}{joiner}selected={todo.pk}#details"
+    href = f"{list_path(todo.todo_list_id, escape(query))}{joiner}selected={todo.pk}#details"
     current = ' aria-current="true"' if selected else ""
     hint = '<small class="match-hint">matches in notes</small>' if match_hint else ""
     label = ""
@@ -502,8 +557,8 @@ def pane_element(
 ):
     """The whole details <aside>, exactly as the page must show it.
 
-    `close_url` is the list address without the selection, like "/"; the
-    builder adds "#todo-<pk>". The pane shows every priority, Medium too.
+    `close_url` is the list address without the selection, like "/lists/1/";
+    the builder adds "#todo-<pk>". The pane shows every priority, Medium too.
     `notes` (None: no notes row) is plain text: each line is escaped, and the
     lines are joined with <br>, after the Created row.
     `edit_url` is the pane's Edit link: the edit page with the same list query,
@@ -514,7 +569,7 @@ def pane_element(
     done", a link to the steps page. It comes before the notes.
     """
     if edit_url is None:
-        query = close_url.removeprefix("/")
+        query = close_url[close_url.index("?") :] if "?" in close_url else ""
         joiner = "&" if query else "?"
         edit_url = f"/{todo.pk}/edit/{query}{joiner}selected={todo.pk}"
     rows = [
@@ -641,12 +696,14 @@ def log_in(client, username, password=TEST_PASSWORD):
     """Log in through the real log-in page, like a person, and return the list.
 
     Opening "/" shows the log-in page. Fill in the form, press "Log in", and
-    land on the list.
+    land on "/", which opens the person's first list.
     """
     page = client.get("/", follow=True)
     if page.redirect_chain != [(f"{LOGIN_URL}?next=/", 302)]:
         raise AssertionError(f"/ did not show the log-in page: {page.redirect_chain}")
     page = send_form(client, page, "Log in", username=username, password=password)
-    if page.redirect_chain != [("/", 302)]:
+    user = get_user_model().objects.get(username=username)
+    landing = [("/", 302), (list_path(first_list(user).pk), 302)]
+    if page.redirect_chain != landing:
         raise AssertionError(f"Log in did not land on the list: {page.redirect_chain}")
     return page

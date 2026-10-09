@@ -15,6 +15,7 @@ from todos.tests.integration.helpers import (
     log_in,
     make_user,
     page_parts,
+    page_path,
     pane_element,
     show_date,
 )
@@ -31,12 +32,15 @@ class DetailsJourneyTests(TestCase):
     def test_plan_and_finish_a_todo_with_the_details_pane(self):
         make_user("ana")  # ana has an account; she logs in on the real page
         page = log_in(self.client, "ana")
+        list_url = page_path(page)  # her list, where log-in landed
         self.assertContains(
             page, "<li>Nothing to do yet. Add something above.</li>", html=True
         )
 
         page = self.client.post(
-            "/add/", {"title": "Buy milk", "due_date": "2026-10-05"}, follow=True
+            f"{list_url}add/",
+            {"title": "Buy milk", "due_date": "2026-10-05"},
+            follow=True,
         )
         self.assertEqual(page_parts(page).titles, ["Buy milk"])
         milk = Todo.objects.get()
@@ -48,7 +52,11 @@ class DetailsJourneyTests(TestCase):
         page = self.client.get(href)
         self.assertEqual(page_parts(page).panes, ["Details"])
         pane = pane_element(
-            milk, due="5 Oct 2026", priority="Medium", created=created, close_url="/"
+            milk,
+            due="5 Oct 2026",
+            priority="Medium",
+            created=created,
+            close_url=list_url,
         )
         self.assertContains(page, pane, count=1, html=True)
 
@@ -62,7 +70,7 @@ class DetailsJourneyTests(TestCase):
             due="5 Oct 2026",
             priority="Medium",
             created=created,
-            close_url="/",
+            close_url=list_url,
         )
         self.assertContains(page, pane, count=1, html=True)
 

@@ -155,7 +155,10 @@ class SubtaskTests(LoggedInTestCase):
             add_step_form(self.cake, EMPTY_BOX), page_without_csrf(response), count=1
         )
         self.assertContains(
-            response, '<a href="/">Back to the list</a>', count=1, html=True
+            response,
+            f"<a href='{self.list_url()}'>Back to the list</a>",
+            count=1,
+            html=True,
         )
 
     def test_titles_are_escaped(self):
@@ -174,7 +177,7 @@ class SubtaskTests(LoggedInTestCase):
         self.assertInHTML(step_row(todo, step), page_without_csrf(page), count=1)
         self.assertNotIn("<img", page.content.decode())
 
-        page = self.client.get("/")
+        page = self.client.get(self.list_url())
         self.assertContains(page, progress_link(todo, 0, 1), count=1, html=True)
         self.assertNotIn("<img", page.content.decode())
 
@@ -386,7 +389,10 @@ class SubtaskTests(LoggedInTestCase):
         for action in actions:
             self.assertTrue(action.endswith("?show=active"), action)
         self.assertContains(
-            response, '<a href="/?show=active">Back to the list</a>', count=1, html=True
+            response,
+            f'<a href="{self.list_url()}?show=active">Back to the list</a>',
+            count=1,
+            html=True,
         )
 
         response = self.client.get(f"/{self.cake.pk}/edit/?show=active")
@@ -400,14 +406,14 @@ class SubtaskTests(LoggedInTestCase):
     def test_list_shows_step_progress(self):
         # The to-do matches the filter, the search and the sort.
         query = "?show=active&q=cake&sort=due"
-        response = self.client.get("/" + query)
+        response = self.client.get(self.list_url() + query)
         self.assertContains(
             response, progress_link(self.cake, 1, 3, query), count=1, html=True
         )
 
         # A to-do with no steps: its whole row, so no progress link in it.
         shop = self.make_todo(title="Shop")
-        page = page_without_csrf(self.client.get("/"))
+        page = page_without_csrf(self.client.get(self.list_url()))
         self.assertInHTML(list_row(shop), page, count=1)
         self.assertInHTML(
             list_row(self.cake, progress_link(self.cake, 1, 3)), page, count=1
@@ -415,40 +421,40 @@ class SubtaskTests(LoggedInTestCase):
 
     def test_list_queries_do_not_grow_with_rows(self):
         with CaptureQueriesContext(connection) as one_row:
-            self.client.get("/")
+            self.client.get(self.list_url())
         for n in range(5):
             todo = self.make_todo(title=f"Job {n}")
             Subtask.objects.create(todo=todo, title="Step 1", done=True)
             Subtask.objects.create(todo=todo, title="Step 2")
         with CaptureQueriesContext(connection) as six_rows:
-            response = self.client.get("/")
+            response = self.client.get(self.list_url())
         self.assertEqual(page_parts(response).titles[-1], "Job 4")
         self.assertEqual(len(six_rows), len(one_row))
 
     def test_pane_shows_the_steps_row(self):
         selected = f"?selected={self.cake.pk}"
-        response = self.client.get("/" + selected)
+        response = self.client.get(self.list_url() + selected)
         created = show_date(timezone.localtime(self.cake.created_at).date())
         pane = pane_element(
             self.cake,
             created=created,
-            close_url="/",
+            close_url=self.list_url(),
             steps=(1, 3, f"/{self.cake.pk}/subtasks/{selected}"),
         )
         self.assertContains(response, pane, count=1, html=True)
 
         # The pane reads the counts the list already has: no extra query.
         with CaptureQueriesContext(connection) as without:
-            self.client.get("/")
+            self.client.get(self.list_url())
         with CaptureQueriesContext(connection) as with_selected:
-            self.client.get("/" + selected)
+            self.client.get(self.list_url() + selected)
         self.assertEqual(len(with_selected), len(without))
 
     def test_pane_of_a_todo_without_steps_has_no_steps_row(self):
         shop = self.make_todo(title="Shop")
-        response = self.client.get(f"/?selected={shop.pk}")
+        response = self.client.get(self.list_url(query=f"?selected={shop.pk}"))
         created = show_date(timezone.localtime(shop.created_at).date())
-        pane = pane_element(shop, created=created, close_url="/")
+        pane = pane_element(shop, created=created, close_url=self.list_url())
         self.assertContains(response, pane, count=1, html=True)
 
     def test_admin_shows_steps_inline(self):
