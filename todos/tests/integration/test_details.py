@@ -116,7 +116,7 @@ class DetailsPaneTests(TestCase):
     def test_redirects_keep_selected(self):
         cases = [
             ("add", reverse("todo_add"), {"title": "Read chapter 3"}),
-            ("toggle", reverse("todo_toggle", args=[self.milk.pk]), {}),
+            ("toggle", reverse("todo_toggle", args=[self.milk.pk]), {"done": "1"}),
             ("delete", reverse("todo_delete", args=[self.home.pk]), {}),
             ("delete completed", reverse("todo_delete_completed"), {"ids": []}),
         ]

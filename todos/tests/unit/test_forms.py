@@ -1,6 +1,8 @@
+from datetime import date
+
 from django.test import TestCase
 
-from todos.forms import TodoForm
+from todos.forms import TodoEditForm, TodoForm
 from todos.models import Todo
 from todos.tests.integration.helpers import PRIORITY_SELECT
 
@@ -122,3 +124,17 @@ class TodoFormNotesTests(TestCase):
                 form = self.form(**data)
                 form.is_valid()
                 self.assertEqual(form.notes_box_open(), expected)
+
+
+class TodoFormRepeatTests(TestCase):
+    def test_missing_repeat_on_edit_becomes_none(self):
+        # "Changes in behaviour", point 6: like priority, a post without
+        # `repeat` saves the empty value ("none"), it does not keep the old one.
+        todo = Todo.objects.create(
+            title="Bins", due_date=date(2026, 10, 12), repeat="weekly"
+        )
+        form = TodoEditForm({"title": "Bins", "due_date": "2026-10-12"}, instance=todo)
+        self.assertTrue(form.is_valid(), form.errors)
+        form.save()
+        todo.refresh_from_db()
+        self.assertEqual(todo.repeat, "none")

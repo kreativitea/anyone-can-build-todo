@@ -48,7 +48,7 @@ class DetailsJourneyTests(TestCase):
         # Done: after the POST and the redirect, the pane is still open.
         done_url = f"/{milk.pk}/toggle/?selected={milk.pk}"
         self.assertIn(done_url, page_parts(page).post_actions)
-        page = self.client.post(done_url, follow=True)
+        page = self.client.post(done_url, {"done": "1"}, follow=True)
         pane = pane_element(
             milk,
             status="Completed",

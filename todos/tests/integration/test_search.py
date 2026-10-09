@@ -286,21 +286,22 @@ class SearchTests(TestCase):
 
         extra = Todo.objects.create(title="Milk to delete")
         toggle = ("todo_toggle", [self.buy.pk])
+        done = {"done": "1"}
         cases = [
             (
                 ("todo_add", [], {"q": "milk"}, {"title": "Milk again"}),
                 "/?q=milk",
             ),
-            ((*toggle, {"q": "milk"}), "/?q=milk"),
+            ((*toggle, {"q": "milk"}, done), "/?q=milk"),
             (
                 ("todo_delete", [extra.pk], {"show": "active", "q": "milk"}),
                 "/?show=active&q=milk",
             ),
-            ((*toggle, {"q": "牛乳"}), "/?q=%E7%89%9B%E4%B9%B3"),
-            ((*toggle, {"q": "buy milk"}), "/?q=buy+milk"),
+            ((*toggle, {"q": "牛乳"}, done), "/?q=%E7%89%9B%E4%B9%B3"),
+            ((*toggle, {"q": "buy milk"}, done), "/?q=buy+milk"),
             # The `&` stays inside q: it never becomes a second parameter.
             (
-                (*toggle, {"q": "a&next=https://evil.example"}),
+                (*toggle, {"q": "a&next=https://evil.example"}, done),
                 "/?q=a%26next%3Dhttps%3A%2F%2Fevil.example",
             ),
             (

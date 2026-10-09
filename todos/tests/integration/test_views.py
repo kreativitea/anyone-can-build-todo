@@ -46,10 +46,10 @@ class TodoTests(TestCase):
 
     def test_toggle_marks_done_and_back(self):
         todo = Todo.objects.create(title="Read chapter 3")
-        self.client.post(reverse("todo_toggle", args=[todo.pk]))
+        self.client.post(reverse("todo_toggle", args=[todo.pk]), {"done": "1"})
         todo.refresh_from_db()
         self.assertTrue(todo.done)
-        self.client.post(reverse("todo_toggle", args=[todo.pk]))
+        self.client.post(reverse("todo_toggle", args=[todo.pk]), {"done": "0"})
         todo.refresh_from_db()
         self.assertFalse(todo.done)
 
@@ -73,7 +73,7 @@ class TodoTests(TestCase):
         self.assertEqual(Todo.objects.count(), 1)
 
     def test_toggle_missing_todo_is_404(self):
-        response = self.client.post(reverse("todo_toggle", args=[999]))
+        response = self.client.post(reverse("todo_toggle", args=[999]), {"done": "1"})
         self.assertEqual(response.status_code, 404)
 
     def test_delete_missing_todo_is_404(self):
@@ -215,9 +215,9 @@ class CountTests(TestCase):
         first = Todo.objects.create(title="Buy milk")
         Todo.objects.create(title="Call home")
         toggle = reverse("todo_toggle", args=[first.pk])
-        response = self.client.post(toggle, follow=True)
+        response = self.client.post(toggle, {"done": "1"}, follow=True)
         self.assertFooter(response, "1 item left", completed=[first])
-        response = self.client.post(toggle, follow=True)
+        response = self.client.post(toggle, {"done": "0"}, follow=True)
         self.assertFooter(response, "2 items left")
 
     def test_the_database_does_the_counting(self):
@@ -282,13 +282,26 @@ class DeleteCompletedTests(TestCase):
         self.assertEqual(self.titles(), {"Call home", "Read chapter 3"})
 
     def test_delete_completed_does_not_load_each_todo(self):
+        # Changed on purpose by repeating (19). The next_todo link has
+        # on_delete=SET_NULL, so Django first reads the rows to delete (one
+        # SELECT for all), empties the links that point at them (one UPDATE),
+        # then deletes (one DELETE). The point stays: the number of queries
+        # does not grow with the number of to-dos (no "N+1").
         url = reverse("todo_delete_completed")
-        with CaptureQueriesContext(connection) as queries:
-            self.client.post(url, {"ids": [self.milk.pk, self.home.pk]})
-        sqls = [query["sql"].lstrip().upper() for query in queries]
-        self.assertTrue(any(sql.startswith("DELETE") for sql in sqls), sqls)
-        reads = [s for s in sqls if s.startswith("SELECT") and "TODOS_TODO" in s]
-        self.assertEqual(reads, [])
+        for count in [2, 5]:
+            with self.subTest(ids=count):
+                ids = [
+                    Todo.objects.create(title=f"Done {n}", done=True).pk
+                    for n in range(count)
+                ]
+                with CaptureQueriesContext(connection) as queries:
+                    self.client.post(url, {"ids": ids})
+                sqls = [query["sql"].lstrip().upper() for query in queries]
+                on_todos = [s.split()[0] for s in sqls if "TODOS_TODO" in s]
+                self.assertEqual(on_todos.count("SELECT"), 1, sqls)
+                self.assertEqual(on_todos.count("UPDATE"), 1, sqls)
+                self.assertEqual(on_todos.count("DELETE"), 1, sqls)
+                self.assertFalse(Todo.objects.filter(pk__in=ids).exists())
 
     def test_get_cannot_delete_completed(self):
         response = self.client.get(reverse("todo_delete_completed"))

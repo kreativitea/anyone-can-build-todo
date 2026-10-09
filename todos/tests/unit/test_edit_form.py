@@ -31,6 +31,7 @@ class EditFormTests(SimpleTestCase):
             # Django moves "type" out of attrs, into widget.input_type.
             "due_date": {},
             "priority": {},
+            "repeat": {},
             "notes": {
                 "cols": "40",
                 "rows": 3,
