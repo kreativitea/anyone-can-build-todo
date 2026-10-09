@@ -20,7 +20,7 @@ class TodoForm(forms.ModelForm):
         label="Due date (optional)",
         required=False,
         input_formats=["%Y-%m-%d"],
-        widget=forms.DateInput(attrs={"type": "date"}),
+        widget=forms.DateInput(attrs={"type": "date"}, format="%Y-%m-%d"),
     )
     # Written by hand: the box Django would make is required, and a post with
     # only a title must still work. A missing or empty priority is Medium.
@@ -60,3 +60,18 @@ class TodoForm(forms.ModelForm):
         if self["notes"].errors:
             return True
         return bool(getattr(self, "cleaned_data", {}).get("notes"))
+
+
+class TodoEditForm(TodoForm):
+    """The add form, for a to-do that already exists. Every field of TodoForm is here too.
+
+    On this page every box has a visible label, so the hidden names and hints go.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # self.fields is this form's own copy. Never change self.base_fields:
+        # some of those field objects are shared with TodoForm (the add form).
+        for field in self.fields.values():
+            field.widget.attrs.pop("aria-label", None)
+            field.widget.attrs.pop("placeholder", None)

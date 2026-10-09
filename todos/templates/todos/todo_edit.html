@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+
+{% block title %}Edit to-do{% endblock %}
+
+{% block style %}
+    form.edit .field { display: flex; flex-direction: column; gap: 0.25rem; margin-bottom: 1rem; }
+    form.edit input, form.edit select, form.edit textarea { padding: 0.5rem; font: inherit; }
+    form.edit .actions { display: flex; align-items: center; gap: 1rem; }
+{% endblock %}
+
+{% block content %}
+  <h1>Edit to-do</h1>
+
+  <form class="edit" method="post" action="{% url 'todo_edit' pk %}{{ list_query }}">
+    {% csrf_token %}
+    {{ form.non_field_errors }}
+    {% for field in form %}
+      <div class="field">{{ field.as_field_group }}</div>
+    {% endfor %}
+    <div class="actions">
+      <button type="submit">Save</button>
+      <a href="{{ list_url }}">Cancel</a>
+    </div>
+  </form>
+{% endblock %}

@@ -28,12 +28,14 @@ class EditFormTests(SimpleTestCase):
                 "autofocus": True,
                 "maxlength": "200",
             },
-            "due_date": {"type": "date"},
+            # Django moves "type" out of attrs, into widget.input_type.
+            "due_date": {},
         }
         self.assertEqual(set(add_form.fields), set(expected))
         for name, attrs in expected.items():
             with self.subTest(field=name):
                 self.assertEqual(add_form.fields[name].widget.attrs, attrs)
+        self.assertEqual(add_form.fields["due_date"].widget.input_type, "date")
 
     def test_date_box_shows_iso_date_in_every_language(self):
         todo = Todo(title="Buy milk", due_date=date(2026, 10, 12))

@@ -1,6 +1,7 @@
 # Plan: edit a to-do
 
-Status: **approved.** No code has changed yet.
+Status: **approved, in progress.** Built and tested on `main` with wave 1. The part "After 6 and 7
+are on `main`" (and its four tests) is left until this branch is rebased on 6 and 7.
 
 This is feature 4, in wave 2 of [the rollout plan](feature-rollout.md). The merge order in wave 2
 is: 6 priority → 7 notes → **4 edit** → 10 search.
@@ -565,3 +566,57 @@ Added to `test_edit.py` after the rebase, with the field names and values from t
 - **Exact element tests are strict.** `test_edit_page_shows_the_saved_values` writes out the whole
   title box. If a later feature changes its attributes, that test must change too. That is on
   purpose: it shows the change.
+
+## What happened
+
+The builder followed the plan. These are the places where it did something a little different, and
+why.
+
+1. **The starting point** is `main` with wave 1 (5, 12, 11, 8), as the plan says. The code there
+   is the same as the plan expects: `TodoForm` with `title` and `due_date`, `page_context`,
+   `list_params`, `list_query`, `back_to_list`, and `page_parts` in
+   `todos/tests/integration/helpers.py`. `page_parts` can already read every `POST` form's
+   `action` (`post_actions`), so the helpers did not change.
+2. **The CUJ date.** On `main`, the CUJ test adds "Buy milk" with the date `2026-10-05`, so the
+   edit step checks `due 5 Oct 2026`, not `due 12 Oct 2026`.
+3. **The label in the CUJ step** is `get_by_label("Title:", exact=True)`, with the colon. The
+   visible label is "Title:", and an exact match needs the whole text.
+4. **The add form's date box has no `type` in `widget.attrs`.** When Django makes a `DateInput`,
+   it moves `type` out of `attrs` into `widget.input_type`. So in
+   `test_edit_form_does_not_change_the_add_form`, the date box's `attrs` are exactly `{}`, and the
+   test also checks `input_type == "date"`. Before the code this test failed with
+   `AttributeError` (as planned), so the wrong `{"type": "date"}` was only seen once the code
+   existed. It was fixed in the code commit.
+5. **The bad-edit test** checks the title box exactly, with `aria-invalid="true"` and
+   `aria-describedby="id_title_error"` when the title has the error. The bad-date case checks the
+   date's error list (`id="id_due_date_error"`) and a title box with no error attributes.
+6. **`page_context` and `back_to_list` did not change.** The edit view only uses them as they are.
+7. **The part for 6 and 7 is not done yet.** The changes in "After 6 and 7 are on `main`" and the
+   four tests in "After the rebase on 6 and 7" wait until this branch is rebased on that `main`.
+
+Results before the code (`make test`, `make test-cuj`): the three unit tests failed (two with
+`AttributeError: module 'todos.forms' has no attribute 'TodoEditForm'`, one with `AssertionError`:
+`value="12/10/2026"`); the 10 integration tests that use `reverse("todo_edit")` failed with
+`NoReverseMatch`; the 2 Edit-link tests failed with `AssertionError` (no Edit link); the protecting
+test passed. The CUJ test failed with a timeout, waiting for the link "Edit Buy milk".
+
+Deliberate bugs, after the code. Each one was put in, the tests were run, and it was taken out
+again; `git diff` showed none of them.
+
+- `self.base_fields["due_date"].widget.attrs["class"] = "edit"` in `TodoEditForm.__init__`:
+  `test_edit_form_does_not_change_the_add_form` failed, `{'class': 'edit'} != {}`. The same line
+  with `"title"` did **not** fail, as the plan says: Django makes a new title field for each class.
+- No `format=` on the date box: `test_date_box_shows_iso_date_in_every_language` failed with
+  `value="12/10/2026"`.
+- `{% block title %}{% endblock %}` in `todo_list.html`:
+  `test_list_page_keeps_its_title_and_add_form` failed: no `<title>To-do list</title>`.
+
+Results after the code: `make test` (Integration 77, Unit 15), `make test-cuj` (CUJ 1) and
+`make check` all pass. `makemigrations --check` says "No changes detected".
+
+Looked at by eye at 375 pixels wide (a phone), with Playwright: on the list, each row shows the
+title (with the due date under it), then Edit, Done and Delete; a long title wraps, and the page
+does not scroll sideways. The edit page shows "Title:" above the title box and "Due date
+(optional):" above the date box, each box the full width, then Save and Cancel. An empty title
+shows "This field is required." in red above the box. From Active, Edit opens
+`/1/edit/?show=active`, and Cancel goes back to `/?show=active`.

@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}To-do list{% endblock %}</title>
+  <link rel="icon" href="data:,">
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 32rem; margin: 2rem auto; padding: 0 1rem; }
+    .errorlist { margin: 0; padding: 0; list-style: none; color: #b00020; }
+    .errorlist li { padding: 0; border: 0; }
+    button { padding: 0.4rem 0.8rem; font-size: 0.9rem; cursor: pointer; }
+    {% block style %}{% endblock %}
+  </style>
+</head>
+<body>
+  {% block content %}{% endblock %}
+</body>
+</html>
