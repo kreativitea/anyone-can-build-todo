@@ -60,6 +60,8 @@ class DetailsPaneTests(TestCase):
         self.assertIn("selected", parts.row("Buy milk").classes)
         self.assertEqual(parts.row("Buy milk").id, f"todo-{self.milk.pk}")
         self.assertNotIn("selected", parts.row("Call home").classes)
+        # The hint is only for when nothing is selected.
+        self.assertNotContains(response, HINT, html=True)
 
     def test_pane_shows_completed_and_no_due_date(self):
         response = self.client.get(f"/?selected={self.home.pk}")
@@ -77,6 +79,14 @@ class DetailsPaneTests(TestCase):
         self.assertEqual(page_parts(response).panes, ["Details"])
         # Its heading is <h2>&lt;b&gt;x&lt;/b&gt;</h2>: text, not a bold tag.
         pane = pane_element(bold, created="4 Oct 2026", close_url="/")
+        self.assertContains(response, pane, count=1, html=True)
+        # The row's title link is escaped too.
+        row_title = title_element(bold, selected=True)
+        self.assertContains(response, row_title, count=1, html=True)
+
+    def test_close_keeps_the_filter(self):
+        response = self.client.get(f"/?show=active&selected={self.milk.pk}")
+        pane = self.milk_pane(close_url="/?show=active")
         self.assertContains(response, pane, count=1, html=True)
 
     def test_every_post_form_keeps_selected(self):
@@ -125,6 +135,18 @@ class DetailsPaneTests(TestCase):
         response = self.client.get("/")
         self.assertContains(response, HINT, count=1, html=True)
         self.assertEqual(page_parts(response).panes, [])
+
+    def test_no_hint_when_the_shown_list_is_empty(self):
+        # There is no title to click, so the hint would be wrong.
+        Todo.objects.filter(done=True).delete()
+        for name, url in [("empty filter", "/?show=completed"), ("empty table", "/")]:
+            if name == "empty table":
+                Todo.objects.all().delete()
+            with self.subTest(name):
+                response = self.client.get(url)
+                self.assertEqual(page_parts(response).titles, [])
+                self.assertNotContains(response, HINT, html=True)
+                self.assertEqual(page_parts(response).panes, [])
 
     # Details pane: the sharing rule. An id that is not in the list on the
     # page gives exactly the page without `selected`.
