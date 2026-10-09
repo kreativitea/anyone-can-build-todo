@@ -479,7 +479,8 @@ These are the places where it did something a little different, and why.
    then `migrate` ran `0003_todo_priority`. Both old to-dos have `priority = 2` (Medium), and
    nothing else changed.
 8. **Steps 7 and 8 (the admin and the page, by hand in a browser)** were not done by the builder
-   agent. The admin is now covered by a test (see 9); the page by the tests and the CUJ test.
+   agent. The admin is now covered by a test (see 9); the page by the tests, the CUJ test, and a
+   screenshot (see 10).
 9. **After the code review.** An adversarial code reviewer found no blockers, and these gaps.
    Each new test was seen failing against its own bug, and each bug was put back:
    - **The label is in its own row.** The label tests also match the whole
@@ -515,3 +516,32 @@ These are the places where it did something a little different, and why.
      an edit post without a priority makes it Medium.
    - **A CUJ run that was not explained.** Once, right after the template change, the first
      journey ended with an error. The message was not saved. The next 16 runs in a row passed.
+     (Later the owner removed the real browser; see 10.)
+10. **Rebased on `main` without a real browser.** The owner decided: no real-browser tests. Main
+    (`8c39353`) removed Playwright, and the journeys now use Django's test client with the
+    `page_forms` helper. So, on the rebase:
+    - The browser commit (the Playwright journey for priority) was dropped. Its checks moved into
+      the test-client journeys in `todos/tests/cuj/test_journeys.py`:
+      - `test_plan_and_finish_a_todo`: the person types no priority, so `page_forms` sends the
+        option the page selected. The new row has **no** label, which proves the box starts on
+        Medium. Bug: no `initial=`, so the page selects nothing and sends High; the journey failed.
+      - `test_a_high_priority_todo_keeps_its_label_when_done` (new): choose priority `3`, and the
+        row is exactly the row with `<span class="priority high">High priority</span>` in its
+        title. After Done, the row is done and keeps the label. Bug: all labels moved after
+        `</ul>`; this journey failed.
+    - **The space before the label** was checked by the browser's text. `html=True` ignores
+      spaces, so `test_high_label_is_shown_and_medium_has_none` now also checks the exact text
+      `Call home <span class="priority high">High priority</span>` (without `html=True`). Bug: no
+      space; the test failed.
+    - **Checked by eye, not by a test** (only a browser can draw them; both CSS rules stay):
+      on a done row the label is **not** crossed out (`display: inline-block`), and it is
+      **faded** (`li.done .priority { opacity: 0.6; }`). The screenshot
+      [priority-labels.png](priority-labels.png) shows the real page with two open to-dos (Pay
+      rent High, Buy milk Medium) and two done ones (Call the bank High, Water the plants Low).
+      The done titles are crossed out, and their labels are not, and look lighter.
+    - **Seen in the screenshot, not fixed here:** at this width, `Priority:` ends one row of the
+      add form and its select box starts the next. The label still points at its box (`for=`), so
+      it works, but it looks split. A small layout fix (keep the label and the box together) could
+      go with feature 4, which moves the CSS to `base.html`.
+    - The migration is still `0003_todo_priority`: `main` has only `0001` and `0002`.
+      `makemigrations --check --dry-run` says "No changes detected".
