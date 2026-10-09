@@ -87,6 +87,24 @@ class MoveTests(LoggedInTestCase):
         self.post_move(oat, "up", "?q=milk&sort=manual")
         self.assertEqual(self.titles(), ["Buy oat milk", "Call home", "Buy milk"])
 
+    def test_move_on_a_tag_page_jumps_over_a_hidden_row(self):
+        # Tags (14): on "?tag=home" only the tagged to-dos are shown.
+        milk = self.make("Buy milk")
+        self.make("Write report")
+        bins = self.make("Put out the bins")
+        milk.set_tags(["home"])
+        bins.set_tags(["home"])
+        query = "?sort=manual&tag=home"
+        response = self.post_move(bins, "up", query)
+        self.assertEqual(
+            response["Location"],
+            f"/lists/{self.todo_list.pk}/{query}#todo-{bins.pk}",
+        )
+        self.assertEqual(self.titles(query), ["Put out the bins", "Buy milk"])
+        self.assertEqual(
+            self.titles(), ["Put out the bins", "Write report", "Buy milk"]
+        )
+
     def test_move_up_on_the_first_row_changes_nothing(self):
         a = self.make("A")
         b = self.make("B")

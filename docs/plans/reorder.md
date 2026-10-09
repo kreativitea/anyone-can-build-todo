@@ -446,8 +446,8 @@ why.
    two gates (see the deliberate bugs below).
 3. **The data function is in `todos/data_migrations.py`** (CONVENTIONS: the logic of every data
    migration lives there), not in `todos/ordering.py`. `todos/ordering.py` has `move`, `renumber`,
-   `needs_renumber` and `move_limits`. The two migration files are `0013_todo_position.py` (made by
-   `makemigrations`) and `0014_number_todos.py` (`makemigrations --empty todos --name number_todos`
+   `needs_renumber` and `move_limits`. The two migration files are `0014_todo_position.py` (made by
+   `makemigrations`; `0013_todo_position.py` before the rebase) and `0015_number_todos.py` (`makemigrations --empty todos --name number_todos`
    plus the one `RunPython` line and its import).
 4. **Completed to-dos go last in My order too** (owner decision on sort). So `manual` is
    `("done", position with empty ones last, "created_at", "pk")`, and a move swaps only with the
@@ -595,3 +595,26 @@ After: `make test` Integration 357 passed, Unit 159 passed; `make test-cuj` CUJ 
 `make check` OK. By eye (`reorder-review/reorder-my-order-1280.png`): the message "Moved Return
 the library books up (3 of 5)" above the list, the focus ring on that row's ↑, the buttons side by
 side with space before them.
+
+### Rebased onto `main` (after lists #19 and tags #20)
+
+Only this branch's commits were moved (`git rebase --onto origin/main`). The places that had to be
+combined:
+
+- **`Todo.save()` and `Todo.from_db()`**: one of each. `from_db` remembers both the owner (tags:
+  a to-do moved into another person's list loses its tags) and the list (My order: a to-do moved
+  to another list goes to its end). `save()` does both in the one transaction: the position, then
+  the row, then `tags.clear()` when the owner changed.
+- **`shown_todos`** is now the filter, the search **and the tag** (`tag_todos` moved into it from
+  `page_context`), so a move on a `?tag=` page swaps with the next tagged row. New test:
+  `test_move_on_a_tag_page_jumps_over_a_hidden_row` (fails if the tag step is left out). The
+  canary also opens `?sort=manual&tag=home`.
+- **Guard:** main's tag rules and `get_model(` rule, and this branch's two patterns, all kept.
+- **Migrations:** this branch's two were deleted and made again after `0013_tag`:
+  `0014_todo_position` (`makemigrations`) and `0015_number_todos` (`--empty`, plus the one
+  `RunPython` line). `makemigrations --check`: no changes.
+- **`test_reorder_migration.py`** sets `name_key` by hand: the historical `TodoList` has no
+  `save()` of ours (lists' review added `name_key`).
+- **Migration check, again:** a scratch database at `0013_tag`, six to-dos in three lists (two
+  people), mixed order: after `migrate`, Home 1 H-a, 2 H-b, 3 H-c; Work 1 W-a, 2 W-b; Other 1
+  O-a, the same as each list's date-added order. Deleted after.
