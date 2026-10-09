@@ -1,12 +1,16 @@
-"""Notes on a to-do (feature 7): the add form and saving.
-
-The checks on the details pane come when this branch is rebased on feature 21.
-"""
+"""Notes on a to-do (feature 7): the add form, saving, and the details pane."""
 
 from django.test import TestCase
 from django.urls import reverse
+from django.utils import timezone
 
 from todos.models import Todo
+from todos.tests.integration.helpers import (
+    page_parts,
+    page_without_csrf,
+    pane_element,
+    show_date,
+)
 
 SUMMARY = "<summary>Notes (optional)</summary>"
 
@@ -24,6 +28,23 @@ def notes_box(inside, *, is_open):
     """The whole folded notes box on the add form: open or closed."""
     open_attr = " open" if is_open else ""
     return f'<details class="add-notes"{open_attr}>{SUMMARY}{inside}</details>'
+
+
+def pane_for(todo, notes=None):
+    """The whole pane of `todo`, opened from "/": only fills in the keywords."""
+    return pane_element(
+        todo,
+        status="Completed" if todo.done else "Active",
+        due=show_date(todo.due_date) if todo.due_date else "No due date",
+        priority=todo.get_priority_display(),
+        created=show_date(timezone.localtime(todo.created_at).date()),
+        close_url="/",
+        notes=notes,
+    )
+
+
+def selected_page(client, todo):
+    return client.get(f"/?selected={todo.pk}")
 
 
 class NotesTests(TestCase):
@@ -88,3 +109,42 @@ class NotesTests(TestCase):
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual(Todo.objects.count(), 0)
                 self.assertContains(response, expected_box, html=True)
+
+    def test_pane_shows_notes_with_line_breaks(self):
+        # "\r\n" is how old data, or data saved from the shell, could look.
+        for notes in ["Low-fat\nOr soy", "Low-fat\r\nOr soy"]:
+            with self.subTest(notes=notes):
+                todo = Todo.objects.create(title="Buy milk", notes=notes)
+                response = selected_page(self.client, todo)
+                self.assertContains(
+                    response,
+                    pane_for(todo, notes="Low-fat\nOr soy"),
+                    count=1,
+                    html=True,
+                )
+                self.assertEqual(page_parts(response).pane_notes, "Low-fat\nOr soy")
+
+    def test_pane_notes_are_escaped(self):
+        notes = "<script>alert(1)</script>"
+        todo = Todo.objects.create(title="Buy milk", notes=notes)
+        response = selected_page(self.client, todo)
+        # pane_for escapes it: "&lt;script&gt;...", shown as text.
+        self.assertContains(response, pane_for(todo, notes=notes), count=1, html=True)
+        parts = page_parts(response)
+        self.assertEqual(parts.pane_notes, notes)
+        self.assertNotIn("script", parts.pane_tags)
+
+    def test_notes_are_not_on_the_list(self):
+        todo = Todo.objects.create(title="Buy milk", notes="Low-fat")
+        with_notes = page_without_csrf(self.client.get("/"))
+        Todo.objects.filter(pk=todo.pk).update(notes="")
+        without_notes = page_without_csrf(self.client.get("/"))
+        self.assertEqual(with_notes, without_notes)
+
+    # Protects what already works: passes before the change too.
+
+    def test_pane_without_notes_has_no_notes_row(self):
+        todo = Todo.objects.create(title="Buy milk")
+        response = selected_page(self.client, todo)
+        self.assertContains(response, pane_for(todo), count=1, html=True)
+        self.assertIsNone(page_parts(response).pane_notes)
