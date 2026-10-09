@@ -76,9 +76,16 @@ class TodoFormNotesTests(TestCase):
                 self.assertEqual(form.cleaned_data["notes"], expected)
 
     def test_line_break_becomes_one_character(self):
-        form = self.form(notes="Low-fat\r\nOr soy")
-        self.assertTrue(form.is_valid(), form.errors)
-        self.assertEqual(form.cleaned_data["notes"], "Low-fat\nOr soy")
+        cases = [
+            ("Low-fat\r\nOr soy", "Low-fat\nOr soy"),
+            # An old Mac line break, "\r" alone, is a line break too.
+            ("a\rb", "a\nb"),
+        ]
+        for notes, expected in cases:
+            with self.subTest(notes=notes):
+                form = self.form(notes=notes)
+                self.assertTrue(form.is_valid(), form.errors)
+                self.assertEqual(form.cleaned_data["notes"], expected)
 
     def test_notes_limit(self):
         cases = [
