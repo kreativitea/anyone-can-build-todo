@@ -32,6 +32,10 @@ class CleanTagNameTests(SimpleTestCase):
             ("# home", "# home"),
             ("##home", "##home"),
             ("CAFÉ", "café"),  # small letters, not only A to Z
+            ("Straße", "straße"),  # .lower(), not casefold(): ß stays
+            # Ά and a combining ypogegrammeni: .lower() undoes NFKC's work,
+            # so NFKC runs again at the end (one letter, U+1FB4).
+            ("\u0386\u0345", "\u1fb4"),
             ("牛乳", "牛乳"),  # Japanese is unchanged
             ("", ""),  # nothing left
             ("   ", ""),
@@ -42,6 +46,21 @@ class CleanTagNameTests(SimpleTestCase):
                 self.assertEqual(clean_tag_name(text), expected)
                 # Cleaning twice gives the same as cleaning once.
                 self.assertEqual(clean_tag_name(clean_tag_name(text)), expected)
+
+
+class CleanTagNameIdempotencyTests(SimpleTestCase):
+    def test_cleaning_twice_is_cleaning_once_for_every_character(self):
+        # Every code point (not the surrogates, which are not text), alone
+        # and followed by a combining mark (U+0345). About 4 seconds.
+        wrong = []
+        for code in range(0x110000):
+            if 0xD800 <= code <= 0xDFFF:
+                continue
+            for text in (chr(code), chr(code) + "\u0345"):
+                once = clean_tag_name(text)
+                if clean_tag_name(once) != once:
+                    wrong.append(f"U+{code:04X}")
+        self.assertEqual(wrong, [])
 
 
 class TagFormTests(TestCase):

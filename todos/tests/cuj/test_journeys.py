@@ -44,15 +44,14 @@ def todo_row(todo, done=False, repeat="", progress="", tags="", query=""):
     which builds them from the to-do itself. `repeat` is the words an open
     repeating to-do shows, like "Every week". `progress` is the steps line,
     inside the title block. `tags` is the row's tag list (from `tag_list`),
-    right after the title block. Then the Edit link, Done and Delete. `query`
+    the last line of the title block. Then the Edit link, Done and Delete. `query`
     is the list query that the links and forms keep, like "?tag=home".
     """
     edit = reverse("todo_edit", args=[todo.pk]) + query
     delete = reverse("todo_delete", args=[todo.pk]) + query
     return (
         f'<li id="todo-{todo.pk}" class="{"done" if done else ""}">'
-        f"{title_element(todo, query, repeat=repeat, progress=progress)}"
-        f"{tags}"
+        f"{title_element(todo, query, repeat=repeat, progress=progress, tags=tags)}"
         f'<a class="edit" href="{escape(edit)}" '
         f'aria-label="Edit {escape(todo.title)}">Edit</a>'
         f"{toggle_form(todo, done, query)}"

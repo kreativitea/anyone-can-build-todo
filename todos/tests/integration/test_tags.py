@@ -5,6 +5,7 @@ own "My to-dos". A tag belongs to the owner of the to-do's LIST.
 """
 
 from datetime import UTC, datetime
+from unittest import mock
 
 from django.contrib.auth import get_user_model
 from django.db import connection
@@ -19,10 +20,12 @@ from todos.tests.integration.helpers import (
     first_list,
     link_href,
     make_user,
+    page_forms,
     page_parts,
     page_without_csrf,
     pane_element,
     tag_list,
+    title_element,
 )
 
 
@@ -172,10 +175,12 @@ class TagTests(LoggedInTestCase):
         list_id = self.todo_list.pk
         self.assertContains(
             response,
-            '<ul class="tags" aria-label="Tags">'
-            f'<li><a class="tag" href="/lists/{list_id}/?tag=home">home</a></li>'
-            f'<li><a class="tag" href="/lists/{list_id}/?tag=urgent">urgent</a></li>'
-            "</ul>",
+            '<span class="tags" role="list" aria-label="Tags">'
+            '<span role="listitem">'
+            f'<a class="tag" href="/lists/{list_id}/?tag=home">home</a></span>'
+            '<span role="listitem">'
+            f'<a class="tag" href="/lists/{list_id}/?tag=urgent">urgent</a></span>'
+            "</span>",
             count=1,
             html=True,
         )
@@ -184,7 +189,7 @@ class TagTests(LoggedInTestCase):
         self.make_todo(title="Call mum")
         response = self.client.get(self.list_url())
         self.assertEqual(page_parts(response).titles, ["Call mum"])
-        self.assertEqual(count_elements(response, "ul", "tags"), 0)
+        self.assertEqual(count_elements(response, "span", "tags"), 0)
 
     def test_tag_link_keeps_the_other_settings(self):
         milk = self.tagged("Buy milk", "home")
@@ -192,9 +197,10 @@ class TagTests(LoggedInTestCase):
         list_id = self.todo_list.pk
         self.assertContains(
             response,
-            '<ul class="tags" aria-label="Tags"><li><a class="tag" '
+            '<span class="tags" role="list" aria-label="Tags">'
+            '<span role="listitem"><a class="tag" '
             f'href="/lists/{list_id}/?show=active&amp;q=milk&amp;tag=home">home</a>'
-            "</li></ul>",
+            "</span></span>",
             count=1,
             html=True,
         )
@@ -219,10 +225,12 @@ class TagTests(LoggedInTestCase):
         list_id = self.todo_list.pk
         self.assertContains(
             response,
-            '<ul class="tags" aria-label="Tags">'
-            f'<li><a class="tag" href="/lists/{list_id}/?tag=%3Cb%3E">&lt;b&gt;</a></li>'
-            f'<li><a class="tag" href="/lists/{list_id}/?tag=a%26show%3Dx">a&amp;show=x</a></li>'
-            "</ul>",
+            '<span class="tags" role="list" aria-label="Tags">'
+            '<span role="listitem">'
+            f'<a class="tag" href="/lists/{list_id}/?tag=%3Cb%3E">&lt;b&gt;</a></span>'
+            '<span role="listitem">'
+            f'<a class="tag" href="/lists/{list_id}/?tag=a%26show%3Dx">a&amp;show=x</a>'
+            "</span></span>",
             count=1,
             html=True,
         )
@@ -347,7 +355,7 @@ class TagTests(LoggedInTestCase):
                     "bobsecret</a>"
                 )
                 self.assertContains(response, link, count=0, html=True)
-                self.assertEqual(count_elements(response, "ul", "tags"), len(titles))
+                self.assertEqual(count_elements(response, "span", "tags"), len(titles))
 
     def test_a_tag_of_the_same_name_from_another_person_does_not_match(self):
         # A broken row (never made by the app): ana's to-do with ben's tag.
@@ -431,7 +439,7 @@ class TagTests(LoggedInTestCase):
     def test_pane_has_no_tags_row_without_tags(self):
         milk = self.make_todo(title="Buy milk")
         response = self.client.get(self.list_url(query=f"?selected={milk.pk}"))
-        self.assertNotIn("ul", page_parts(response).pane_tags)
+        self.assertNotIn("span", page_parts(response).pane_tags)
         self.assertEqual(page_parts(response).pane_tags.count("dt"), 4)
 
     # Queries.
@@ -461,6 +469,67 @@ class TagTests(LoggedInTestCase):
         response = self.client.get(self.list_url(query="?tag=home"))
         self.assertEqual(page_parts(response).titles, ["Buy milk"])
 
+    # From the code review of tags (14).
+
+    # The phone layout: the tags are a line INSIDE the title block, like the
+    # steps line, so on a narrow screen the title keeps the full width.
+
+    def test_tags_are_the_last_line_of_the_title_block(self):
+        milk = self.tagged("Buy milk", "urgent", "home")
+        response = self.client.get(self.list_url())
+        element = title_element(milk, tags=self.tags_of(milk))
+        self.assertContains(response, element, count=1, html=True)
+        self.assertEqual(page_parts(response).titles, ["Buy milk"])
+
+    # The chosen tag is shown only through Django's escaping.
+
+    def test_current_tag_is_escaped(self):
+        self.tagged("Buy milk", "home")
+        response = self.client.get(self.list_url(), {"tag": "<b>x</b>"})
+        self.assertContains(
+            response,
+            '<p class="current-tag">Tagged <strong>&lt;b&gt;x&lt;/b&gt;</strong> · '
+            f'<a href="{self.list_url()}">Show all tags</a></p>',
+            count=1,
+            html=True,
+        )
+        self.assertContains(
+            response,
+            "<li>No to-dos tagged &quot;&lt;b&gt;x&lt;/b&gt;&quot;.</li>",
+            count=1,
+            html=True,
+        )
+
+    # "Show all tags" keeps the other settings, the selection too.
+
+    def test_show_all_tags_keeps_the_pane_open(self):
+        milk = self.tagged("Buy milk", "home")
+        self.make_todo(title="Call mum")
+        query = f"?sort=title&tag=home&selected={milk.pk}"
+        response = self.client.get(self.list_url(query=query))
+        href = link_href(response, "Show all tags")
+        self.assertEqual(href, self.list_url(query=f"?sort=title&selected={milk.pk}"))
+        page = self.client.get(href)
+        self.assertEqual(page_parts(page).titles, ["Buy milk", "Call mum"])
+        self.assertEqual(page_parts(page).selected_titles, ["Buy milk"])
+        self.assertEqual(page_parts(page).panes, ["Details"])
+
+    # The edit page saves the to-do and its tags together, or neither.
+
+    def test_edit_saves_the_todo_and_its_tags_together(self):
+        milk = self.tagged("Buy milk", "home")
+        with (
+            mock.patch.object(Todo, "set_tags", side_effect=RuntimeError("boom")),
+            self.assertRaises(RuntimeError),
+        ):
+            self.client.post(
+                reverse("todo_edit", args=[milk.pk]),
+                {"title": "Buy oat milk", "tag_names": "work"},
+            )
+        milk.refresh_from_db()
+        self.assertEqual(milk.title, "Buy milk")
+        self.assertEqual(tag_names(milk), ["home"])
+
 
 class TagAdminTests(LoggedInTestCase):
     @classmethod
@@ -488,3 +557,43 @@ class TagAdminTests(LoggedInTestCase):
         response = self.client.get(f"/admin/todos/todo/{milk.pk}/change/")
         self.assertEqual(response.status_code, 200)
         self.assertNotIn("tags", response.context["adminform"].form.fields)
+
+    def test_admin_move_to_another_persons_list_clears_the_tags(self):
+        # A superuser moves ana's to-do into ben's list. Its tags are ana's
+        # rows: they must not go with it (ben's pages would show them).
+        ben = make_user("ben")
+        bens_list = first_list(ben)
+        milk = self.make_todo(title="Buy milk")
+        milk.set_tags(["anasecret"])
+        url = f"/admin/todos/todo/{milk.pk}/change/"
+        page = self.client.get(url)
+        [form] = [
+            f for f in page_forms(page) if f.method == "post" and "title" in f.fields
+        ]
+        data = form.data(todo_list=str(bens_list.pk))
+        data["_save"] = ["Save"]
+        response = self.client.post(url, data)
+        self.assertEqual(response.status_code, 302)
+        milk.refresh_from_db()
+        self.assertEqual((milk.todo_list, milk.owner), (bens_list, ben))
+        self.assertEqual(tag_names(milk), [])
+        # Ana keeps her tag row; nothing of hers is on ben's list.
+        self.assertTrue(
+            Tag.objects.owned_by(self.user).filter(name="anasecret").exists()
+        )
+        self.client.force_login(ben)
+        response = self.client.get(f"/lists/{bens_list.pk}/")
+        self.assertNotContains(response, "anasecret")
+
+    def test_admin_save_in_the_same_list_keeps_the_tags(self):
+        milk = self.make_todo(title="Buy milk")
+        milk.set_tags(["home"])
+        url = f"/admin/todos/todo/{milk.pk}/change/"
+        page = self.client.get(url)
+        [form] = [
+            f for f in page_forms(page) if f.method == "post" and "title" in f.fields
+        ]
+        data = form.data(title="Buy oat milk")
+        data["_save"] = ["Save"]
+        self.assertEqual(self.client.post(url, data).status_code, 302)
+        self.assertEqual(tag_names(milk), ["home"])

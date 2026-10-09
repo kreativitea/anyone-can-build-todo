@@ -499,7 +499,7 @@ def show_date(day):
 
 
 def title_element(
-    todo, query="", selected=False, match_hint=False, repeat="", progress=""
+    todo, query="", selected=False, match_hint=False, repeat="", progress="", tags=""
 ):
     """The whole <span class="title"> of one row: the link, the search's
     "matches in notes" hint, the priority label (High or Low; Medium has none),
@@ -511,6 +511,8 @@ def title_element(
     "" means no repeat span (a to-do that does not repeat, or a completed one).
     `progress` is the whole "1 of 3 steps" element (its own line, last in the
     title block), or "" for a to-do with no steps.
+    `tags` is the whole tag list (from `tag_list`): its own line, after the
+    steps, or "" for a to-do with no tags.
     """
     joiner = "&" if query else "?"
     href = f"{list_path(todo.todo_list_id, escape(query))}{joiner}selected={todo.pk}#details"
@@ -528,12 +530,13 @@ def title_element(
     repeat_span = f'<span class="repeat">{repeat}</span>' if repeat else ""
     return (
         f'<span class="title"><a href="{href}"{current}>{escape(todo.title)}</a>'
-        f"{hint}{label}{due}{repeat_span}{progress}</span>"
+        f"{hint}{label}{due}{repeat_span}{progress}{tags}</span>"
     )
 
 
 def tag_list(list_id, names, query="", current=""):
-    """The <ul class="tags"> of one to-do, exactly as the page must show it.
+    """The tags of one to-do, exactly as the page must show it: a list
+    (role="list") of links, inside the title block, so it is a <span>.
 
     Each tag is a link to the list `list_id` with `tag=<name>` after the other
     list settings in `query` (like "?show=active"). The name in the address is
@@ -546,9 +549,10 @@ def tag_list(list_id, names, query="", current=""):
         href = f"{list_path(list_id, query)}{joiner}tag={quote(name, safe='')}"
         mark = ' aria-current="true"' if name == current else ""
         items.append(
-            f'<li><a class="tag" href="{escape(href)}"{mark}>{escape(name)}</a></li>'
+            f'<span role="listitem"><a class="tag" href="{escape(href)}"{mark}>'
+            f"{escape(name)}</a></span>"
         )
-    return f'<ul class="tags" aria-label="Tags">{"".join(items)}</ul>'
+    return f'<span class="tags" role="list" aria-label="Tags">{"".join(items)}</span>'
 
 
 def toggle_form(todo, done=False, query=""):
