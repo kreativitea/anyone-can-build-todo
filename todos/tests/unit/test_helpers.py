@@ -7,7 +7,7 @@ HTML strings, with no request and no database.
 
 from django.test import SimpleTestCase
 
-from todos.tests.integration.helpers import PageForms, PageParts
+from todos.tests.integration.helpers import PageForms, PageParts, link_href
 
 
 def one_form(html, page_path="/"):
@@ -186,3 +186,29 @@ class PaneNotesTests(SimpleTestCase):
                 parts = PageParts(html)
                 self.assertIsNone(parts.pane_notes)
                 self.assertEqual(parts.pane_tags, tags)
+
+
+class LinkHrefTests(SimpleTestCase):
+    """`link_href` finds a link by its whole name, like a click by a person."""
+
+    class Page:
+        def __init__(self, html):
+            self.content = html.encode()
+
+    def test_name_is_the_aria_label_or_the_text(self):
+        page = self.Page(
+            '<a class="edit" href="/5/edit/" aria-label="Edit Buy milk">Edit</a>'
+            '<a href="/?selected=5#details">Buy  milk</a>'
+        )
+        self.assertEqual(link_href(page, "Edit Buy milk"), "/5/edit/")
+        self.assertEqual(link_href(page, "Buy milk"), "/?selected=5#details")
+
+    def test_the_name_must_match_exactly_once(self):
+        page = self.Page('<a href="/a/">Edit</a><a href="/b/">Edit</a>')
+        for name in ["Edit", "Edi", "Edit Buy milk"]:
+            with self.subTest(name=name), self.assertRaises(AssertionError):
+                link_href(page, name)
+
+    def test_html_codes_in_the_address_are_turned_back(self):
+        page = self.Page('<a href="/1/edit/?show=active&amp;selected=1">Edit</a>')
+        self.assertEqual(link_href(page, "Edit"), "/1/edit/?show=active&selected=1")
