@@ -1,11 +1,11 @@
 from datetime import date
 
-from django.db import connection
+from django.db import connection, transaction
 from django.test import Client, TestCase
 from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 
-from todos.models import Todo
+from todos.models import Subtask, Todo
 from todos.tests.integration.helpers import (
     delete_completed_form,
     list_footer,
@@ -281,27 +281,55 @@ class DeleteCompletedTests(TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(self.titles(), {"Call home", "Read chapter 3"})
 
-    def test_delete_completed_does_not_load_each_todo(self):
-        # Changed on purpose by repeating (19). The next_todo link has
-        # on_delete=SET_NULL, so Django first reads the rows to delete (one
-        # SELECT for all), empties the links that point at them (one UPDATE),
-        # then deletes (one DELETE). The point stays: the number of queries
-        # does not grow with the number of to-dos (no "N+1").
-        url = reverse("todo_delete_completed")
-        for count in [2, 5]:
-            with self.subTest(ids=count):
-                ids = [
-                    Todo.objects.create(title=f"Done {n}", done=True).pk
-                    for n in range(count)
-                ]
-                with CaptureQueriesContext(connection) as queries:
-                    self.client.post(url, {"ids": ids})
-                sqls = [query["sql"].lstrip().upper() for query in queries]
-                on_todos = [s.split()[0] for s in sqls if "TODOS_TODO" in s]
-                self.assertEqual(on_todos.count("SELECT"), 1, sqls)
-                self.assertEqual(on_todos.count("UPDATE"), 1, sqls)
-                self.assertEqual(on_todos.count("DELETE"), 1, sqls)
-                self.assertFalse(Todo.objects.filter(pk__in=ids).exists())
+    def test_delete_completed_uses_a_fixed_number_of_queries(self):
+        """The same few queries for 2 to-dos as for 5. Never one per to-do.
+
+        Changed on purpose by repeating (19) and by steps (15). Django first
+        reads the to-dos to delete, in ONE select (whole rows, all at once).
+        The next_todo link (SET_NULL, 19) is emptied in ONE update. Steps (15)
+        point to a to-do with CASCADE: all their steps go in ONE delete, and
+        are never loaded. Then the to-dos go in ONE delete. It must never be
+        one query per to-do or per step.
+        """
+        open_step = Subtask.objects.create(todo=self.read, title="Open page")
+        more = [Todo.objects.create(title=f"Done {n}", done=True) for n in range(3)]
+        for todo in [self.milk, self.home, *more]:
+            for n in range(2):
+                Subtask.objects.create(todo=todo, title=f"Step {n}")
+        cases = [
+            ("2 ids", [self.milk, self.home]),
+            ("5 ids", [self.milk, self.home, *more]),
+        ]
+        sizes = []
+        for label, todos in cases:
+            with self.subTest(label):
+                with transaction.atomic():
+                    with CaptureQueriesContext(connection) as queries:
+                        self.post_ids([todo.pk for todo in todos])
+                    sqls = [query["sql"].strip().upper() for query in queries]
+                    sizes.append(len(sqls))
+
+                    def count(start, inside="", sqls=sqls):
+                        return len(
+                            [s for s in sqls if s.startswith(start) and inside in s]
+                        )
+
+                    # Steps: one DELETE for all of them, never a SELECT.
+                    self.assertEqual(count('DELETE FROM "TODOS_SUBTASK" WHERE'), 1)
+                    self.assertEqual(count("SELECT", 'FROM "TODOS_SUBTASK"'), 0)
+                    # To-dos: one SELECT, one UPDATE (19's next_todo), one DELETE.
+                    self.assertEqual(count("SELECT", 'FROM "TODOS_TODO"'), 1)
+                    self.assertEqual(count('UPDATE "TODOS_TODO" SET "NEXT_TODO_ID"'), 1)
+                    self.assertEqual(count("UPDATE"), 1)
+                    self.assertEqual(count('DELETE FROM "TODOS_TODO" WHERE'), 1)
+                    # The deleted to-dos' steps are gone; the open one's stays.
+                    self.assertFalse(
+                        Todo.objects.filter(pk__in=[t.pk for t in todos]).exists()
+                    )
+                    self.assertFalse(Subtask.objects.filter(todo__in=todos).exists())
+                    self.assertTrue(Subtask.objects.filter(pk=open_step.pk).exists())
+                    transaction.set_rollback(True)
+        self.assertEqual(sizes[0], sizes[1])
 
     def test_get_cannot_delete_completed(self):
         response = self.client.get(reverse("todo_delete_completed"))

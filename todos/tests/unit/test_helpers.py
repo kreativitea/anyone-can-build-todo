@@ -212,3 +212,21 @@ class LinkHrefTests(SimpleTestCase):
     def test_html_codes_in_the_address_are_turned_back(self):
         page = self.Page('<a href="/1/edit/?show=active&amp;selected=1">Edit</a>')
         self.assertEqual(link_href(page, "Edit"), "/1/edit/?show=active&selected=1")
+
+
+class AccessibleNameTests(SimpleTestCase):
+    def test_a_button_is_named_by_its_aria_label_else_its_text(self):
+        # Like the steps page: the visible word is "Done", a screen reader
+        # says "Done Buy flour".
+        form = one_form(
+            '<form method="post" action="/1/subtasks/2/done/">'
+            '<button name="done" value="1" aria-label="Done Buy flour">Done</button>'
+            '<input type="submit" value="Go" aria-label="Go now">'
+            "<button>Add</button></form>"
+        )
+        self.assertEqual(
+            [b.accessible_name for b in form.buttons],
+            ["Done Buy flour", "Go now", "Add"],
+        )
+        self.assertEqual([b.text for b in form.buttons], ["Done", "Go", "Add"])
+        self.assertEqual(form.data(form.buttons[0]), {"done": ["1"]})

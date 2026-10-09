@@ -68,15 +68,27 @@ def page_path(response):
 
 
 class PageButton:
-    """A button that sends its form: its text, and the name/value it adds."""
+    """A button that sends its form: its text, and the name/value it adds.
 
-    def __init__(self, text, name=None, value=""):
+    `label` is its aria-label, or None when it has none.
+    """
+
+    def __init__(self, text, name=None, value="", label=None):
         self.text = text
         self.name = name
         self.value = value
+        self.label = label
+
+    @property
+    def accessible_name(self):
+        """What a screen reader says: the aria-label if there is one, else the text."""
+        return self.label if self.label is not None else self.text
 
     def __repr__(self):
-        return f"PageButton({self.text!r}, name={self.name!r}, value={self.value!r})"
+        return (
+            f"PageButton({self.text!r}, name={self.name!r}, value={self.value!r}, "
+            f"label={self.label!r})"
+        )
 
 
 class PageForm:
@@ -160,7 +172,9 @@ class PageForms(HTMLParser):
         elif tag == "button":
             kind = (attrs.get("type") or "submit").lower()
             if kind == "submit" and not disabled:
-                button = PageButton("", name, attrs.get("value", ""))
+                button = PageButton(
+                    "", name, attrs.get("value", ""), attrs.get("aria-label")
+                )
                 self._form.buttons.append(button)
                 self._button = []
         elif tag == "textarea" and name and not disabled:
@@ -186,7 +200,8 @@ class PageForms(HTMLParser):
         if kind == "submit":
             if not disabled:
                 text = attrs.get("value") or "Submit"
-                self._form.buttons.append(PageButton(text, name, text))
+                label = attrs.get("aria-label")
+                self._form.buttons.append(PageButton(text, name, text, label))
             return
         if kind in ("button", "reset", "image", "file") or not name or disabled:
             return
@@ -426,6 +441,7 @@ def pane_element(
     notes=None,
     edit_url=None,
     repeats=None,
+    steps=None,
 ):
     """The whole details <aside>, exactly as the page must show it.
 
@@ -437,6 +453,8 @@ def pane_element(
     selection included. None builds it from `close_url`, like the page does.
     `repeats` (None: no Repeats row) is the words of the repeat, like
     "Every week". Its row comes right after Due.
+    `steps` (None: no Steps row) is (done, total, href): the row "Steps: 1 of 3
+    done", a link to the steps page. It comes before the notes.
     """
     if edit_url is None:
         query = close_url.removeprefix("/")
@@ -450,6 +468,9 @@ def pane_element(
         ("Created", created),
     ]
     dl = "".join(f"<dt>{name}</dt><dd>{value}</dd>" for name, value in rows)
+    if steps is not None:
+        done, total, href = steps
+        dl += f'<dt>Steps</dt><dd><a href="{escape(href)}">{done} of {total} done</a></dd>'
     if notes is not None:
         lines = "<br>".join(escape(line) for line in notes.split("\n"))
         dl += f'<dt>Notes</dt><dd class="notes">{lines}</dd>'
