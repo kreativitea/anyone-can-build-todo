@@ -1,7 +1,7 @@
 # Plan: put the to-dos in my own order (Move up / Move down)
 
-Status: **approved** with the owner's answers (buttons only; "Date added" stays the default sort).
-Being built on `feature/reorder` (on top of lists, 13).
+Status: **done.** Approved with the owner's answers (buttons only; "Date added" stays the default
+sort). Built on `feature/reorder`, on top of lists (13); see "What happened" at the end.
 
 This is feature 16, the last one in wave 5 of [the rollout plan](feature-rollout.md). It merges
 **after lists (13) and tags (14)**. An adversarial review (a reviewer whose job is to find what is
@@ -427,3 +427,100 @@ The owner chose buttons only. Dragging (HTML5 drag and drop, about 55 lines of J
 `POST /lists/<list_id>/reorder/` address and a drag CUJ) was planned in the second version of this
 plan and is **not built**. If it is wanted later, it needs its own plan; the buttons stay as the
 keyboard and phone way.
+
+## What happened
+
+Built on `feature/lists` (lists, 13, not merged yet), in two commits: the tests first (red), then
+the feature (green). Tags (14) is built at the same time and merges first, so the merge queue
+renumbers the two migrations. These are the places where the build is different from the plan, and
+why.
+
+1. **Names from lists.** `back_to_list(request, list_id)` and `list_url(request, list_id)` take a
+   list **id**, not the list. `todo_move` redirects to `list_url(request, list_id) + "#todo-<pk>"`.
+   The `<li id="todo-<pk>">` was already there (details pane).
+2. **The view finds the list with `get_list` too** (CONVENTIONS): first the to-do through
+   `Todo.objects.for_user(request.user)`, then `get_list(request, todo.todo_list_id)`. So there are
+   two gates (see the deliberate bugs below).
+3. **The data function is in `todos/data_migrations.py`** (CONVENTIONS: the logic of every data
+   migration lives there), not in `todos/ordering.py`. `todos/ordering.py` has `move`, `renumber`,
+   `needs_renumber` and `move_limits`. The two migration files are `0013_todo_position.py` (made by
+   `makemigrations`) and `0014_number_todos.py` (`makemigrations --empty todos --name number_todos`
+   plus the one `RunPython` line and its import).
+4. **Completed to-dos go last in My order too** (owner decision on sort). So `manual` is
+   `("done", position with empty ones last, "created_at", "pk")`, and a move swaps only with the
+   next shown row **with the same done state**: an open to-do never swaps with a completed one
+   (that would change nothing on the screen). So the disabled buttons are: ↑ on the first open row
+   and on the first completed row, ↓ on the last open row and on the last completed row
+   (`move_limits`, keys `no_up_ids` / `no_down_ids` in `page_context`).
+5. **No queries outside the list.** `next_position()` takes no list id: it is called on one list's
+   to-dos (`self.todo_list.todos.next_position()`), and `move` starts every query from
+   `todo.todo_list.todos`. So the source guard needed no new allowed line for the model or
+   `ordering.py`. It needed two for `number_existing_todos` (the historical model, every row once),
+   like the other data migrations.
+6. **The neighbour is read inside the transaction.** The page's visible ids are read with
+   `values_list("pk")` (no step counts: `shown_todos` returns the rows before
+   `with_subtask_progress()`), then the list's own rows in My order are kept only if they are shown.
+7. **No real browser** (owner decision). The journey `test_put_my_todos_in_order` uses the test
+   client: it follows the "My order" link, presses "Move Three up" and "Move One down" (Enter on a
+   focused button sends the same form), reloads, and checks that "Date added" keeps the old order.
+8. **Tests added beyond the plan:** `test_move_stays_with_the_open_or_the_completed_rows`,
+   `test_move_never_touches_another_list` (unit); `test_move_down_swaps_with_the_row_below`,
+   `test_move_on_a_search_page_jumps_over_a_hidden_row`, `test_move_of_a_missing_todo_is_404`,
+   `test_new_todo_goes_last_in_my_order`, `test_a_move_never_changes_another_persons_list`,
+   `test_move_buttons_stop_where_the_completed_todos_start`, `test_move_buttons_keep_the_list_query`
+   (integration); `test_saving_again_in_the_same_list_keeps_the_position`,
+   `test_the_next_repeating_copy_goes_to_the_end` (unit); and
+   `integration/test_reorder_migration.py`, which runs the two migrations for real on old to-dos in
+   two lists. The 404 matrix has two rows for `todo_move` (`up`, `down`); the canary already opens
+   every `SORTS` value, so it also opens My order. Helpers: `move_form(...)` and `row_html(...)`.
+9. **One old test changed after the red run:** `test_completed_go_last_in_every_sort` checks that
+   every `SORTS` value has a case, so it got a `manual` case (made by hand positions).
+
+### Red and green
+
+- **Red** (`reorder-before.txt`, in the builder's scratchpad): Integration 326 passed, 19 failed,
+  10 errors; Unit 135 passed, 2 failed, 16 errors; CUJ 7 passed, 1 failed. The reasons: no `position` field (`AttributeError`, `KeyError`), no
+  `todos.ordering` (`ModuleNotFoundError`), no `number_existing_todos` (`ImportError`), no
+  `in_my_order`, `KeyError: 'transaction_mode'`, no `/<pk>/move/` (404, and `NoReverseMatch` for
+  `todo_move` in the matrix), no "My order" sort link (four links, not five; `{}` for
+  `sort=manual`), no `form.move` in the rows, no migration ending `_todo_position`, and the journey
+  found 0 links named "My order".
+- **Green:** `make test`: Integration 347 passed, Unit 153 passed. `make test-cuj`: CUJ 8 passed.
+  `make check`: every commit check passed, no missing migrations, 508 tests OK.
+
+### Deliberate bugs (each caught, then put back)
+
+- `Meta.ordering = ["position", "created_at"]` → `test_meta_ordering_is_still_oldest_first` and
+  `test_list_is_oldest_first` fail.
+- `todo_move` with `get_object_or_404(Todo.objects, pk=pk)` → the source guard fails. The 404
+  tests still pass, because `get_list` is a second gate. With **both** gates removed (no
+  `for_user`, and `todo.todo_list` instead of `get_list`): moving **out of another person's list**
+  is caught by `test_cannot_move_another_persons_todo` and the 404 matrix (`302 != 404`, both
+  directions), and by the guard.
+- `can_move = True` always → `test_no_move_buttons_in_other_sorts` fails for every other sort.
+- **Into another person's list:** `move` reads its neighbours from every to-do
+  (`type(todo)._default_manager.all()`) instead of the to-do's own list →
+  `test_a_move_never_changes_another_persons_list` (ben's positions changed) and
+  `test_move_never_touches_another_list` fail. (The guard does not see `type(todo)._default_manager`;
+  the tests do.)
+
+### Migration check
+
+A scratch database at `0012_todo_list_required` with six old to-dos in three lists (two people),
+added in a mixed order with set dates. After `migrate`: Home 1 H-a, 2 H-b, 3 H-c; Work 1 W-a,
+2 W-b; Other 1 O-a. Each list's My order equals its "Date added" order. The scratch database was
+deleted after.
+
+### Checked by eye (headless Chrome, 1280 × 800)
+
+`runserver` on a free port with a fresh database; a test user made in the shell, logged in through
+the real log-in form; five to-dos added and three Move buttons pressed through the real forms; Pay
+rent marked Done; Chrome got the pages through a small local proxy that adds the session cookie;
+then the server was stopped and the database deleted.
+
+- **My order** (`reorder-my-order-1280.png`): "Sort by: Date added  Due date  Priority  Title  **My
+  order**"; the rows Water the plants, Buy milk, Call the dentist, Return the library books, then
+  the completed Pay rent. Each row ends with a small ↑ above a small ↓, after Delete. Greyed
+  (disabled): ↑ of Water the plants, ↓ of Return the library books, and both on Pay rent (the only
+  completed one). The rows are a little taller than before (two stacked buttons); nothing wraps.
+- **Date added** (`reorder-date-added-1280.png`): the order they were added, and no arrows.

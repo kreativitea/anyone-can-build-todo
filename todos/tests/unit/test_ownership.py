@@ -137,6 +137,15 @@ ALLOWED = {
         "todos/data_migrations.py",
         "Todo.objects.filter(todo_list__isnull=True).delete()",
     ),
+    # Reorder (16): numbers every to-do once, per list (the historical model).
+    (
+        "todos/data_migrations.py",
+        'for todo in Todo.objects.order_by("todo_list_id", "created_at", "pk"):',
+    ),
+    (
+        "todos/data_migrations.py",
+        'Todo.objects.bulk_update(changed, ["position"], batch_size=500)',
+    ),
     # The admin: staff see every to-do on purpose.
     ("todos/admin.py", "model = Subtask"),
 }

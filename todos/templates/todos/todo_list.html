@@ -35,6 +35,9 @@
     li .priority.high { font-weight: bold; color: #8b0000; background: #fde8e8; border: 1px solid #8b0000; }
     li .priority.low { color: #555; border: 1px solid #bbb; }
     li.done .priority { opacity: 0.6; }
+    /* Move up / Move down (My order): two small buttons, one above the other. */
+    form.move { display: flex; flex-direction: column; gap: 0.1rem; }
+    form.move button { padding: 0 0.4rem; font-size: 0.8rem; line-height: 1.2; }
     .list-footer { color: #666; font-size: 0.9rem; }
     /* Tags (14): small links, on their own line in the title block (like the steps line). */
     form.add .tags-box { flex: 1 1 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
@@ -152,6 +155,14 @@
               {% csrf_token %}
               <button type="submit">Delete</button>
             </form>
+            {% if can_move %}
+              {# Only in My order. The aria-label says which to-do, like the Edit link. #}
+              <form class="move" method="post" action="{% url 'todo_move' todo.pk %}{{ list_query }}">
+                {% csrf_token %}
+                <button type="submit" name="direction" value="up" aria-label="Move {{ todo.title }} up" title="Move up"{% if todo.pk in no_up_ids %} disabled{% endif %}>↑</button>
+                <button type="submit" name="direction" value="down" aria-label="Move {{ todo.title }} down" title="Move down"{% if todo.pk in no_down_ids %} disabled{% endif %}>↓</button>
+              </form>
+            {% endif %}
           </li>
         {% empty %}
           <li>{% if q %}{{ no_match_start }} "{{ q }}".{% elif current_tag %}No to-dos tagged "{{ current_tag }}".{% else %}{{ empty_message }}{% endif %}</li>

@@ -4,7 +4,7 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import MaxLengthValidator
 from django.db import models, transaction
-from django.db.models import Count, Q
+from django.db.models import Count, F, Max, Q
 from django.utils import timezone
 
 from . import repeat as rp
@@ -199,6 +199,18 @@ class TodoQuerySet(models.QuerySet):
             ),
         )
 
+    def in_my_order(self):
+        """The to-dos in "My order" (reorder, 16): by position, the empty ones
+        last. The date added, then the id, break a tie.
+        """
+        return self.order_by(F("position").asc(nulls_last=True), "created_at", "pk")
+
+    def next_position(self):
+        """The number after the largest position here. Use it on ONE list's
+        to-dos (`todo_list.todos`). The database finds the largest number.
+        """
+        return (self.aggregate(Max("position"))["position__max"] or 0) + 1
+
 
 class Todo(models.Model):
     class Priority(models.IntegerChoices):
@@ -273,6 +285,11 @@ class Todo(models.Model):
     )
     # Set only through TodoForm / TodoEditForm, which call set_tags.
     tags = models.ManyToManyField(Tag, blank=True, related_name="todos")
+    # The place in its list's "My order" (reorder, 16): smaller is higher.
+    # Empty means "not placed yet" (bulk_create, loaddata): it sorts last.
+    # No unique rule: SQLite would refuse a swap, row by row. Only save()
+    # and the Move buttons (todos/ordering.py) set it.
+    position = models.PositiveIntegerField(null=True, blank=True, editable=False)
 
     objects = TodoQuerySet.as_manager()
 
@@ -287,18 +304,37 @@ class Todo(models.Model):
         # view has to remember it, and the two can never be different.
         self.owner_id = self.todo_list.owner_id
         saved_owner_id = getattr(self, "_saved_owner_id", self.owner_id)
-        super().save(*args, **kwargs)
+        loaded_list_id = getattr(self, "_loaded_list_id", self.todo_list_id)
+        if self.pk is not None and self.todo_list_id != loaded_list_id:
+            self.position = None  # moved to another list: go to its end
+        # One transaction: the largest number is read and the row written
+        # together. IMMEDIATE (settings) lets one such writer in at a time.
+        with transaction.atomic():
+            if self.position is None:
+                # Every way that makes a to-do comes here: the add form, the
+                # admin, the next copy of a repeating to-do.
+                self.position = self.todo_list.todos.next_position()
+                update_fields = kwargs.get("update_fields")
+                if update_fields is not None:
+                    kwargs["update_fields"] = {*update_fields, "position"}
+            super().save(*args, **kwargs)
+            if saved_owner_id != self.owner_id:
+                # Moved into another person's list (only the admin can do
+                # this today). Its tags are the OLD owner's rows: they never
+                # go with it.
+                self.tags.clear()
         self._saved_owner_id = self.owner_id
-        if saved_owner_id != self.owner_id:
-            # Moved into another person's list (only the admin can do this
-            # today). Its tags are the OLD owner's rows: they never go with it.
-            self.tags.clear()
+        self._loaded_list_id = self.todo_list_id
 
     @classmethod
     def from_db(cls, db, field_names, values):
         todo = super().from_db(db, field_names, values)
-        # The owner as it is in the database, for save().
-        todo._saved_owner_id = todo.owner_id
+        # As it is in the database, for save(): the owner (tags) and the
+        # list (a move to another list goes to its end in My order).
+        loaded = dict(zip(field_names, values, strict=True))
+        todo._saved_owner_id = loaded.get("owner_id", todo.owner_id)
+        if "todo_list_id" in loaded:
+            todo._loaded_list_id = loaded["todo_list_id"]
         return todo
 
     def set_tags(self, names):
