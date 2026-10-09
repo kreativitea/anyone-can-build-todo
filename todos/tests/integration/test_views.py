@@ -140,3 +140,43 @@ class TodoTests(TestCase):
         Todo.objects.create(title="Buy milk")
         response = self.client.get(reverse("todo_list"))
         self.assertNotContains(response, 'class="due"')
+
+
+class CountTests(TestCase):
+    """How many to-dos are left, shown under the list."""
+
+    # Count: new behaviour.
+
+    def test_count_is_shown_under_the_list(self):
+        Todo.objects.create(title="Buy milk")
+        Todo.objects.create(title="Call home")
+        Todo.objects.create(title="Read chapter 3", done=True)
+        response = self.client.get(reverse("todo_list"))
+        self.assertContains(response, '<p class="count">2 items left</p>', html=True)
+
+    def test_count_says_item_for_one(self):
+        Todo.objects.create(title="Buy milk")
+        response = self.client.get(reverse("todo_list"))
+        self.assertContains(response, '<p class="count">1 item left</p>', html=True)
+
+    def test_count_says_items_for_zero(self):
+        Todo.objects.create(title="Buy milk", done=True)
+        response = self.client.get(reverse("todo_list"))
+        self.assertContains(response, '<p class="count">0 items left</p>', html=True)
+
+    def test_count_is_on_the_error_page(self):
+        Todo.objects.create(title="Call home")
+        response = self.client.post(
+            reverse("todo_add"), {"title": "Buy milk", "due_date": "not-a-date"}
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, '<p class="count">1 item left</p>', html=True)
+
+    # Count: protect what already works.
+
+    def test_no_count_when_the_list_is_empty(self):
+        response = self.client.get(reverse("todo_list"))
+        self.assertContains(response, "Nothing to do yet")
+        self.assertNotContains(response, "item left")
+        self.assertNotContains(response, "items left")
+        self.assertNotContains(response, "<footer")

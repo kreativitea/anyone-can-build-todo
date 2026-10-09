@@ -24,3 +24,17 @@ class TodoModelTests(TestCase):
 
     def test_new_todo_has_no_due_date(self):
         self.assertIsNone(Todo.objects.create(title="Buy milk").due_date)
+
+    # Count: new behaviour.
+
+    def test_remaining_leaves_out_done_todos(self):
+        Todo.objects.create(title="Buy milk")
+        Todo.objects.create(title="Call home")
+        done = Todo.objects.create(title="Read chapter 3", done=True)
+        self.assertEqual(Todo.objects.remaining().count(), 2)
+        self.assertNotIn(done, Todo.objects.remaining())
+
+    def test_remaining_is_zero_when_all_are_done(self):
+        Todo.objects.create(title="Buy milk", done=True)
+        Todo.objects.create(title="Call home", done=True)
+        self.assertEqual(Todo.objects.remaining().count(), 0)
