@@ -1,8 +1,10 @@
+import unicodedata
 from collections.abc import Callable
 from typing import NamedTuple
 from urllib.parse import urlencode
 
 from django.db import DatabaseError, transaction
+from django.db.models import Q
 from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -37,17 +39,69 @@ class Filter(NamedTuple):
     value: str  # the value in the address, ?show=<value>
     label: str  # the word on the link
     empty_message: str  # what the list says when nothing matches
+    no_match_start: str  # with a search: the message before the word
     apply: Callable  # makes the list of to-dos smaller
 
 
 # The one table of filters. The first row is the default: it needs no ?show=.
 FILTERS = [
-    Filter("all", "All", "Nothing to do yet. Add something above.", lambda t: t),
-    Filter("active", "Active", "Nothing left to do.", lambda t: t.remaining()),
-    Filter("completed", "Completed", "Nothing completed yet.", lambda t: t.completed()),
+    Filter(
+        "all",
+        "All",
+        "Nothing to do yet. Add something above.",
+        "No to-dos match",
+        lambda t: t,
+    ),
+    Filter(
+        "active",
+        "Active",
+        "Nothing left to do.",
+        "No active to-dos match",
+        lambda t: t.remaining(),
+    ),
+    Filter(
+        "completed",
+        "Completed",
+        "Nothing completed yet.",
+        "No completed to-dos match",
+        lambda t: t.completed(),
+    ),
 ]
 DEFAULT_FILTER = FILTERS[0]
 FILTER_BY_VALUE = {f.value: f for f in FILTERS}
+
+# The longest search, in characters (code points): the title's max_length,
+# 200, so any title can be pasted whole. The server cuts the search to this.
+SEARCH_MAX_LENGTH = Todo._meta.get_field("title").max_length
+# The browser counts a box's maxlength in UTF-16 units, and one character (an
+# emoji) can take two. So the box allows twice as many; the server still cuts.
+SEARCH_BOX_MAXLENGTH = 2 * SEARCH_MAX_LENGTH
+
+# The zero-width non-joiner and joiner are format characters too, but Persian,
+# Hindi and emoji need them inside a word, so they are kept.
+KEPT_FORMAT_CHARACTERS = {"‌", "‍"}
+
+
+def is_invisible(ch):
+    """True for a control or format character that a search must not keep."""
+    if ch.isspace() or ch in KEPT_FORMAT_CHARACTERS:
+        return False
+    return unicodedata.category(ch) in ("Cc", "Cf")
+
+
+def clean_search(text):
+    """The search word: no invisible characters, one space between words.
+
+    At most SEARCH_MAX_LENGTH characters (the title's max_length, 200).
+    Invisible characters are control characters (like the "null" character)
+    and format characters (like a zero-width space), but not the two joiners.
+    White space is kept for the next step, which turns every kind of it (also
+    the wide Japanese space) into one normal space. The cut comes last, so
+    removed characters do not count.
+    """
+    text = "".join(ch for ch in text if not is_invisible(ch))
+    text = " ".join(text.split())
+    return text[:SEARCH_MAX_LENGTH].rstrip()
 
 
 def list_params(data):
@@ -59,6 +113,9 @@ def list_params(data):
     show = data.get("show")
     if show in FILTER_BY_VALUE and show != DEFAULT_FILTER.value:
         params["show"] = show
+    q = clean_search(data.get("q") or "")
+    if q:
+        params["q"] = q
     # `selected` is always the last key: later checks (search, sort) go above.
     selected = clean_id(data.get("selected"))
     if selected is not None:
@@ -79,6 +136,37 @@ def list_query(params):
 def filter_todos(todos, params):
     """Only the to-dos the filter asks for."""
     return chosen_filter(params).apply(todos)
+
+
+def search_words(q):
+    """The search word as typed, and its NFKC form if that is different.
+
+    NFKC turns wide letters into normal ones: "ｍｉｌｋ" becomes "milk".
+    """
+    words = [q]
+    plain = unicodedata.normalize("NFKC", q)
+    if plain != q:
+        words.append(plain)
+    return words
+
+
+def search_todos(todos, params):
+    """Only the to-dos whose title or notes contain the search word, as typed
+    or in its NFKC form.
+
+    With a search, each to-do also gets `title_match`: True when the title
+    matched. The page shows "matches in notes" when it is False. The database
+    works it out in the same query (an annotation).
+    """
+    q = params.get("q")
+    if not q:
+        return todos
+    title_match = Q()
+    notes_match = Q()
+    for word in search_words(q):
+        title_match |= Q(title__icontains=word)
+        notes_match |= Q(notes__icontains=word)
+    return todos.filter(title_match | notes_match).annotate(title_match=title_match)
 
 
 def filter_links(params):
@@ -136,10 +224,12 @@ def page_context(request, form):
     params = list_params(request.GET)
     todos = Todo.objects.all()
     todos = filter_todos(todos, params)
+    todos = search_todos(todos, params)
     # Everything that changes `todos` (search, sort, ...) goes above this line.
     selected = selected_todo(todos, params)
     if selected is None:
         params.pop("selected", None)  # then the page is exactly the page without it
+    without_q = {k: v for k, v in params.items() if k != "q"}
     return {
         "todos": todos,
         "form": form,
@@ -156,6 +246,11 @@ def page_context(request, form):
         "selected": selected,
         "select_base": select_base(params),
         "close_url": reverse("todo_list") + list_query(without_selected(params)),
+        "q": params.get("q", ""),
+        "no_match_start": chosen_filter(params).no_match_start,
+        "search_box_maxlength": SEARCH_BOX_MAXLENGTH,
+        "search_keeps": list(without_q.items()),
+        "clear_search_url": reverse("todo_list") + list_query(without_q),
     }
 
 
