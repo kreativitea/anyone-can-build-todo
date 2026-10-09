@@ -3,6 +3,7 @@ from unittest.mock import patch
 from django.http import QueryDict
 from django.test import SimpleTestCase
 
+from todos import views
 from todos.views import filter_links, list_params, list_query
 
 
@@ -76,3 +77,58 @@ class FilterLinksTests(SimpleTestCase):
                 },
             ],
         )
+
+
+class SelectedTests(SimpleTestCase):
+    """The details pane (feature 21): ?selected=<id> is a list parameter."""
+
+    # Details pane: new behaviour.
+
+    def test_list_params_keeps_a_good_selected(self):
+        cases = [
+            ("selected=5", {"selected": "5"}),
+            ("selected=007", {"selected": "7"}),  # one address per to-do
+            ("selected=" + "9" * 18, {"selected": "9" * 18}),
+        ]
+        for query, expected in cases:
+            with self.subTest(query=query):
+                self.assertEqual(list_params(QueryDict(query)), expected)
+
+    def test_selected_is_the_last_key(self):
+        result = list_params(QueryDict("selected=5&show=active"))
+        self.assertEqual(result, {"show": "active", "selected": "5"})
+        self.assertEqual(list(result), ["show", "selected"])
+
+    def test_filter_links_keep_selected(self):
+        urls = [
+            link["url"] for link in filter_links({"show": "active", "selected": "5"})
+        ]
+        self.assertEqual(
+            urls,
+            ["/?selected=5", "/?show=active&selected=5", "/?show=completed&selected=5"],
+        )
+
+    def test_select_base(self):
+        self.assertEqual(views.select_base({}), "/?selected=")
+        self.assertEqual(
+            views.select_base({"show": "active", "selected": "5"}),
+            "/?show=active&selected=",
+        )
+
+    # Details pane: protect what already works.
+
+    def test_list_params_drops_a_bad_selected(self):
+        for query in [
+            "selected=",
+            "selected=abc",
+            "selected=-1",
+            "selected=1.5",
+            "selected=1e3",
+            "selected=%EF%BC%95",  # a wide 5: isdigit() says yes
+            "selected=%C2%B2",  # a superscript 2: isdigit() says yes, int() crashes
+            "selected=5%C2%B2",  # "5²"
+            "selected=" + "9" * 19,  # may not fit in SQLite's integer
+            "selected=5%26next%3Dx",  # a hidden "&next=x" inside the value
+        ]:
+            with self.subTest(query=query):
+                self.assertEqual(list_params(QueryDict(query)), {})
