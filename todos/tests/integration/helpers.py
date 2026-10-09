@@ -374,15 +374,18 @@ def show_date(day):
     return f"{day.day} {day:%b %Y}"
 
 
-def title_element(todo, query="", selected=False):
-    """The whole <span class="title"> of one row: the link, the priority label
-    (High or Low; Medium has none) and the due date.
+def title_element(todo, query="", selected=False, match_hint=False):
+    """The whole <span class="title"> of one row: the link, the search's
+    "matches in notes" hint, the priority label (High or Low; Medium has none)
+    and the due date.
 
     `query` is the list query without the selection, like "?show=active".
+    `match_hint` is True when the search matched only the notes.
     """
     joiner = "&" if query else "?"
-    href = f"/{query}{joiner}selected={todo.pk}#details"
+    href = f"/{escape(query)}{joiner}selected={todo.pk}#details"
     current = ' aria-current="true"' if selected else ""
+    hint = '<small class="match-hint">matches in notes</small>' if match_hint else ""
     label = ""
     if todo.priority != todo.Priority.MEDIUM:
         name = todo.get_priority_display()
@@ -394,7 +397,7 @@ def title_element(todo, query="", selected=False):
     )
     return (
         f'<span class="title"><a href="{href}"{current}>{escape(todo.title)}</a>'
-        f"{label}{due}</span>"
+        f"{hint}{label}{due}</span>"
     )
 
 

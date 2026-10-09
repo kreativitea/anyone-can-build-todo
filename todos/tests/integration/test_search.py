@@ -1,10 +1,12 @@
 from urllib.parse import urlencode
 
+from django.db import connection
 from django.test import TestCase
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 
 from todos.models import Todo
-from todos.tests.integration.helpers import page_parts
+from todos.tests.integration.helpers import page_parts, title_element
 
 # ギュウニュウ in normal katakana, written with code points so that no editor
 # can change how its letters are stored.
@@ -31,14 +33,19 @@ PLAIN_SEARCH_FORM = (
 )
 
 
-def title(text):
-    """The title of a to-do on the list, as the whole element."""
-    return f'<span class="title">{text}</span>'
-
-
 def search_box(value):
     """The search box, as the whole element, with `value` already escaped."""
     return BOX.format(value)
+
+
+def query(**params):
+    """The list query in the title links, like "?show=active&q=milk"."""
+    return "?" + urlencode(params) if params else ""
+
+
+def make(*titles, **fields):
+    """Make one to-do per title, in order, and return them."""
+    return [Todo.objects.create(title=title, **fields) for title in titles]
 
 
 class SearchTests(TestCase):
@@ -51,12 +58,17 @@ class SearchTests(TestCase):
         """Open the list with this search. The test client encodes the address."""
         return self.client.get("/", {**other, "q": q})
 
-    def assert_shown(self, response, shown, hidden):
-        """Each title in `shown` is on the page once; each in `hidden` is not."""
-        for text in shown:
-            self.assertContains(response, title(text), count=1, html=True)
-        for text in hidden:
-            self.assertContains(response, title(text), count=0, html=True)
+    def assert_shown(self, response, shown, list_query="", hints=()):
+        """Exactly the to-dos in `shown` are on the list, in order.
+
+        `parts.titles` proves that no other to-do is shown. Each shown title
+        is then compared as the whole element, with its link (which keeps
+        `list_query`) and with the "matches in notes" hint only for `hints`.
+        """
+        self.assertEqual(page_parts(response).titles, [t.title for t in shown])
+        for todo in shown:
+            element = title_element(todo, list_query, match_hint=todo in hints)
+            self.assertContains(response, element, count=1, html=True)
 
     # Search: new behaviour.
 
@@ -64,61 +76,81 @@ class SearchTests(TestCase):
         for q in ["milk", "MILK", "Milk"]:
             with self.subTest(q=q):
                 response = self.search(q)
-                self.assert_shown(response, ["Buy milk", "Milk the cow"], ["Call home"])
+                self.assert_shown(response, [self.buy, self.cow], query(q=q))
 
     def test_search_finds_japanese(self):
         Todo.objects.all().delete()
-        Todo.objects.create(title="牛乳を買う")
-        Todo.objects.create(title="Call home")
+        milk, _ = make("牛乳を買う", "Call home")
         response = self.search("牛乳")
-        self.assert_shown(response, ["牛乳を買う"], ["Call home"])
+        self.assert_shown(response, [milk], query(q="牛乳"))
 
     def test_wide_letters_find_normal_letters(self):
         Todo.objects.all().delete()
-        titles = ["Buy milk", GYUUNYUU, "Call home"]
-        for text in titles:
-            Todo.objects.create(title=text)
+        buy, gyuunyuu, _ = make("Buy milk", GYUUNYUU, "Call home")
         cases = [
-            ("ｍｉｌｋ", "Buy milk"),
-            ("ＭＩＬＫ", "Buy milk"),
-            ("ｷﾞｭｳﾆｭｳ", GYUUNYUU),  # half-width katakana
+            ("ｍｉｌｋ", buy),
+            ("ＭＩＬＫ", buy),
+            ("ｷﾞｭｳﾆｭｳ", gyuunyuu),  # half-width katakana
         ]
         for q, found in cases:
             with self.subTest(q=q):
                 response = self.search(q)
-                others = [text for text in titles if text != found]
-                self.assert_shown(response, [found], others)
+                self.assert_shown(response, [found], query(q=q))
 
     def test_typed_wide_letters_find_a_wide_title(self):
         Todo.objects.all().delete()
-        for text in ["ＭＩＬＫ tea", "Buy milk", "Call home"]:
-            Todo.objects.create(title=text)
+        tea, buy, _ = make("ＭＩＬＫ tea", "Buy milk", "Call home")
         response = self.search("ＭＩＬＫ")
-        self.assert_shown(response, ["ＭＩＬＫ tea", "Buy milk"], ["Call home"])
+        self.assert_shown(response, [tea, buy], query(q="ＭＩＬＫ"))
 
     def test_search_treats_wildcards_as_text(self):
         Todo.objects.all().delete()
-        titles = ["100% done", "file_name", "file-name", "Call home"]
-        for text in titles:
-            Todo.objects.create(title=text)
+        done, underscore, _, _ = make(
+            "100% done", "file_name", "file-name", "Call home"
+        )
         # `file-name` matters: an unescaped `_` would match its `-`.
-        cases = [("%", "100% done"), ("_", "file_name"), ("file_name", "file_name")]
+        cases = [("%", done), ("_", underscore), ("file_name", underscore)]
         for q, found in cases:
             with self.subTest(q=q):
                 response = self.search(q)
-                others = [text for text in titles if text != found]
-                self.assert_shown(response, [found], others)
+                self.assert_shown(response, [found], query(q=q))
 
     def test_search_keeps_the_joiners(self):
         Todo.objects.all().delete()
-        titles = [PERSIAN, f"{CODER} review", "Call home"]
-        for text in titles:
-            Todo.objects.create(title=text)
-        for q, found in [(PERSIAN, PERSIAN), (CODER, f"{CODER} review")]:
+        persian, coder, _ = make(PERSIAN, f"{CODER} review", "Call home")
+        for q, found in [(PERSIAN, persian), (CODER, coder)]:
             with self.subTest(q=q):
                 response = self.search(q)
-                others = [text for text in titles if text != found]
-                self.assert_shown(response, [found], others)
+                self.assert_shown(response, [found], query(q=q))
+
+    def test_search_finds_words_only_in_the_notes(self):
+        Todo.objects.all().delete()
+        shopping = Todo.objects.create(title="Shopping", notes="milk and eggs")
+        Todo.objects.create(title="Call home")
+        response = self.search("MILK")
+        self.assert_shown(response, [shopping], query(q="MILK"), hints=[shopping])
+
+    def test_wide_letters_find_words_in_the_notes(self):
+        Todo.objects.all().delete()
+        shopping = Todo.objects.create(title="Shopping", notes="milk and eggs")
+        Todo.objects.create(title="Call home")
+        response = self.search("ｍｉｌｋ")
+        self.assert_shown(response, [shopping], query(q="ｍｉｌｋ"), hints=[shopping])
+
+    def test_notes_only_match_shows_a_hint(self):
+        # Buy milk matches in the title (and its notes): no hint.
+        # Shopping matches only in its notes: the hint.
+        self.buy.notes = "the milk in the blue box"
+        self.buy.save()
+        shopping = Todo.objects.create(title="Shopping", notes="milk and eggs")
+        with self.subTest("a search"):
+            response = self.search("milk")
+            self.assert_shown(
+                response, [self.buy, self.cow, shopping], query(q="milk"), [shopping]
+            )
+        with self.subTest("no search: never a hint"):
+            response = self.client.get("/")
+            self.assert_shown(response, [self.buy, self.cow, self.call, shopping])
 
     def test_no_match_message_shows_the_cleaned_word(self):
         # Spaces and a zero-width space around the word are cleaned away.
@@ -158,13 +190,25 @@ class SearchTests(TestCase):
         )
         self.assertContains(response, form, count=1, html=True)
 
+    def test_search_form_keeps_the_selected_todo(self):
+        pk = self.buy.pk
+        response = self.client.get(f"/?q=milk&selected={pk}")
+        form = (
+            '<form class="search" role="search" method="get" action="/">'
+            f'<input type="hidden" name="selected" value="{pk}">'
+            '<label for="search-q">Search to-dos</label>'
+            f"{search_box('milk')}"
+            '<button type="submit">Search</button>'
+            f'<a href="/?selected={pk}">Clear search</a>'
+            "</form>"
+        )
+        self.assertContains(response, form, count=1, html=True)
+
     def test_empty_search_is_the_same_as_no_search(self):
         for url in ["/?q=", "/?q=%20%20", "/?q=%E3%80%80"]:
             with self.subTest(url=url):
                 response = self.client.get(url)
-                self.assert_shown(
-                    response, ["Buy milk", "Milk the cow", "Call home"], []
-                )
+                self.assert_shown(response, [self.buy, self.cow, self.call])
                 self.assertContains(response, PLAIN_SEARCH_FORM, count=1, html=True)
                 self.assertContains(
                     response, '<a href="/" aria-current="page">All</a>', html=True
@@ -193,7 +237,7 @@ class SearchTests(TestCase):
 
     def test_search_and_filter_together(self):
         response = self.client.get("/?show=active&q=milk")
-        self.assert_shown(response, ["Buy milk"], ["Milk the cow", "Call home"])
+        self.assert_shown(response, [self.buy], query(show="active", q="milk"))
 
     def test_filter_links_keep_the_search(self):
         response = self.client.get("/?q=milk")
@@ -207,13 +251,31 @@ class SearchTests(TestCase):
 
     def test_every_post_form_keeps_the_search(self):
         # On /?q=milk, "Milk the cow" (completed) is shown too, with its forms.
-        for query in ["?show=active&q=milk", "?q=milk"]:
-            with self.subTest(query=query):
-                actions = page_parts(self.client.get("/" + query)).post_actions
+        for list_query in ["?show=active&q=milk", "?q=milk"]:
+            with self.subTest(query=list_query):
+                actions = page_parts(self.client.get("/" + list_query)).post_actions
                 self.assertGreaterEqual(len(actions), 3)
                 for action in actions:
                     path, mark, rest = action.partition("?")
-                    self.assertEqual(mark + rest, query, action)
+                    self.assertEqual(mark + rest, list_query, action)
+
+    def test_edit_link_keeps_the_search(self):
+        response = self.client.get("/?q=milk")
+        link = (
+            f'<a class="edit" href="/{self.buy.pk}/edit/?q=milk" '
+            'aria-label="Edit Buy milk">Edit</a>'
+        )
+        self.assertContains(response, link, count=1, html=True)
+
+    def test_edit_page_keeps_the_search(self):
+        list_query = "?show=active&q=milk"
+        response = self.client.get(f"/{self.buy.pk}/edit/{list_query}")
+        self.assertEqual(
+            page_parts(response).post_actions, [f"/{self.buy.pk}/edit/{list_query}"]
+        )
+        self.assertContains(
+            response, '<a href="/?show=active&amp;q=milk">Cancel</a>', html=True
+        )
 
     def test_actions_go_back_to_the_search(self):
         def post(name, args, params, data=None):
@@ -240,6 +302,10 @@ class SearchTests(TestCase):
                 "/?q=a%26next%3Dhttps%3A%2F%2Fevil.example",
             ),
             (
+                ("todo_edit", [self.buy.pk], {"q": "milk"}, {"title": "Buy oat milk"}),
+                "/?q=milk",
+            ),
+            (
                 (
                     "todo_delete_completed",
                     [],
@@ -261,8 +327,27 @@ class SearchTests(TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Enter a valid date.")
-        self.assert_shown(response, ["Buy milk"], ["Call home"])
+        self.assert_shown(response, [self.buy, self.cow], query(q="milk"))
         self.assertContains(response, search_box("milk"), count=1, html=True)
+
+    # Search with the details pane (21).
+
+    def test_search_that_hides_the_selected_todo_closes_the_pane(self):
+        # Call home is selected, but the search for milk hides it: the page is
+        # exactly the page without the selection.
+        hidden = f"/?q=milk&selected={self.call.pk}"
+        response = self.client.get(hidden)
+        self.assertEqual(page_parts(response).panes, [])
+        self.assertEqual(page_parts(response).selected_titles, [])
+        self.assertContains(
+            response, '<a href="/">Clear search</a>', count=1, html=True
+        )
+
+    def test_a_selected_result_opens_the_pane(self):
+        response = self.client.get(f"/?q=milk&selected={self.buy.pk}")
+        parts = page_parts(response)
+        self.assertEqual(parts.panes, ["Details"])
+        self.assertEqual(parts.selected_titles, ["Buy milk"])
 
     # Search: protect what already works.
 
@@ -273,6 +358,15 @@ class SearchTests(TestCase):
         before = rows()
         self.search("milk")
         self.assertEqual(rows(), before)
+
+    def test_search_costs_no_extra_query(self):
+        # The hint comes from the same query as the list (an annotation).
+        Todo.objects.create(title="Shopping", notes="milk and eggs")
+        with CaptureQueriesContext(connection) as without:
+            self.client.get("/")
+        with CaptureQueriesContext(connection) as with_search:
+            self.search("milk")
+        self.assertEqual(len(with_search), len(without))
 
     def test_count_and_footer_ignore_the_search(self):
         # The whole table has 2 active to-dos: Buy milk and Call home.
@@ -285,8 +379,7 @@ class SearchTests(TestCase):
 
     def test_delete_completed_ignores_the_search(self):
         Todo.objects.all().delete()
-        buy = Todo.objects.create(title="Buy milk", done=True)
-        call = Todo.objects.create(title="Call home", done=True)
+        buy, call = make("Buy milk", "Call home", done=True)
         response = self.search("banana")
         # The button and the ids only: the form's address is checked by
         # test_every_post_form_keeps_the_search.

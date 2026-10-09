@@ -209,6 +209,10 @@ class SearchParamsTests(SimpleTestCase):
         self.assertEqual(result, {"show": "active", "q": "milk"})
         self.assertEqual(list(result), ["show", "q"])
 
+    def test_selected_stays_after_the_search(self):
+        result = list_params(QueryDict("selected=5&q=milk&show=active"))
+        self.assertEqual(list(result), ["show", "q", "selected"])
+
     # Search: protect what already works.
 
     def test_list_params_drops_an_empty_search(self):
