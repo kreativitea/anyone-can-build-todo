@@ -7,14 +7,15 @@ from datetime import date
 
 from django.contrib.auth.models import User
 from django.db import connection
-from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
 
 from todos.models import Subtask, Todo
 from todos.tests.integration.helpers import (
+    LoggedInTestCase,
     page_forms,
+    page_post_forms,
     page_without_csrf,
     pane_element,
     show_date,
@@ -32,13 +33,14 @@ def done(todo, query=""):
     return reverse("todo_toggle", args=[todo.pk]) + query
 
 
-class WantedStateTests(TestCase):
+class WantedStateTests(LoggedInTestCase):
     """Done and Undo for EVERY to-do (also one that does not repeat): the
     button sends the state the person wants, so a second press changes nothing.
     """
 
     def setUp(self):
-        self.milk = Todo.objects.create(title="Buy milk", due_date=MONDAY)
+        super().setUp()
+        self.milk = self.make_todo(title="Buy milk", due_date=MONDAY)
 
     def press(self, todo, wanted):
         """Press Done (wanted="1") or Undo (wanted="0") on `todo`."""
@@ -75,9 +77,10 @@ class WantedStateTests(TestCase):
         self.assertEqual(Todo.objects.count(), 1)
 
 
-class DoneAndUndoTests(TestCase):
+class DoneAndUndoTests(LoggedInTestCase):
     def setUp(self):
-        self.bins = Todo.objects.create(
+        super().setUp()
+        self.bins = self.make_todo(
             title="Bins",
             due_date=MONDAY,
             repeat="weekly",
@@ -214,6 +217,7 @@ class DoneAndUndoTests(TestCase):
         admin_user = User.objects.create_superuser("admin", "admin@example.test")
         self.client.force_login(admin_user)
         data = {
+            "owner": str(todo.owner_id),
             "title": todo.title,
             "due_date": todo.due_date.isoformat() if todo.due_date else "",
             "priority": str(todo.priority),
@@ -241,13 +245,14 @@ class DoneAndUndoTests(TestCase):
             reverse("admin:todos_todo_change", args=[todo.pk]), data
         )
         self.assertEqual(response.status_code, 302)
-        self.client.logout()
+        # Back to ana, the owner, for the rest of the test.
+        self.client.force_login(self.user)
         return response
 
     def edit(self, todo, **changes):
         """Save `todo` on its edit page, sending what the page's form sends."""
         page = self.client.get(reverse("todo_edit", args=[todo.pk]))
-        (form,) = [f for f in page_forms(page) if f.method == "post"]
+        (form,) = page_post_forms(page)
         response = self.client.post(form.action, form.data(**changes))
         self.assertEqual(response.status_code, 302)
         return response
@@ -295,7 +300,7 @@ class DoneAndUndoTests(TestCase):
         self.edit(self.bins)
         self.bins.refresh_from_db()
         self.assertTrue(self.bins.edited)
-        milk = Todo.objects.create(title="Buy milk")
+        milk = self.make_todo(title="Buy milk")
         self.admin_save(milk)
         milk.refresh_from_db()
         self.assertTrue(milk.edited)
@@ -345,7 +350,7 @@ class DoneAndUndoTests(TestCase):
 
     def test_done_in_year_9999_makes_no_copy(self):
         # The next date would be after 31 Dec 9999, the last date Python has.
-        far = Todo.objects.create(
+        far = self.make_todo(
             title="Far away", due_date=date(9999, 12, 28), repeat="weekly"
         )
         response = self.press(far, "1")
@@ -356,7 +361,7 @@ class DoneAndUndoTests(TestCase):
         self.assertFalse(Todo.objects.filter(title="Far away", done=False).exists())
 
 
-class MonthlyDayTests(TestCase):
+class MonthlyDayTests(LoggedInTestCase):
     """Monthly remembers the day the person chose (owner decision)."""
 
     def press_done(self, todo):
@@ -388,7 +393,7 @@ class MonthlyDayTests(TestCase):
         copy = self.press_done(Todo.objects.get())
         self.assertEqual(copy.due_date, date(2027, 2, 28))
         page = self.client.get(reverse("todo_edit", args=[copy.pk]))
-        (form,) = [f for f in page_forms(page) if f.method == "post"]
+        (form,) = page_post_forms(page)
         self.client.post(form.action, form.data(due_date="2027-02-27"))
         self.assertEqual(self.press_done(copy).due_date, date(2027, 3, 27))
 
@@ -399,12 +404,12 @@ class MonthlyDayTests(TestCase):
         )
         copy = self.press_done(Todo.objects.get())
         page = self.client.get(reverse("todo_edit", args=[copy.pk]))
-        (form,) = [f for f in page_forms(page) if f.method == "post"]
+        (form,) = page_post_forms(page)
         self.client.post(form.action, form.data(title="Pay rent"))
         self.assertEqual(self.press_done(copy).due_date, date(2027, 3, 31))
 
 
-class RepeatFormTests(TestCase):
+class RepeatFormTests(LoggedInTestCase):
     def test_add_a_weekly_todo(self):
         self.client.post(
             reverse("todo_add"),
@@ -468,8 +473,8 @@ class RepeatFormTests(TestCase):
         )
 
     def test_done_and_undo_buttons_send_the_wanted_state(self):
-        milk = Todo.objects.create(title="Buy milk")
-        home = Todo.objects.create(title="Call home", done=True)
+        milk = self.make_todo(title="Buy milk")
+        home = self.make_todo(title="Call home", done=True)
         page = page_without_csrf(self.client.get(reverse("todo_list")))
         self.assertInHTML(toggle_form(milk), page, count=1)
         self.assertInHTML(toggle_form(home, done=True), page, count=1)
@@ -479,28 +484,26 @@ class RepeatFormTests(TestCase):
         )
 
     def test_open_repeating_todo_shows_its_repeat(self):
-        bins = Todo.objects.create(title="Bins", due_date=MONDAY, repeat="weekly")
+        bins = self.make_todo(title="Bins", due_date=MONDAY, repeat="weekly")
         response = self.client.get(reverse("todo_list"))
         element = title_element(bins, repeat="Every week")
         self.assertIn('<span class="repeat">Every week</span>', element)
         self.assertContains(response, element, count=1, html=True)
 
     def test_completed_repeating_todo_does_not_show_repeat(self):
-        bins = Todo.objects.create(
-            title="Bins", due_date=MONDAY, repeat="weekly", done=True
-        )
+        bins = self.make_todo(title="Bins", due_date=MONDAY, repeat="weekly", done=True)
         response = self.client.get(reverse("todo_list"))
         # The whole title span of that row, exactly: no repeat span in it.
         self.assertContains(response, title_element(bins), count=1, html=True)
 
     def test_edit_the_copys_due_date(self):
-        bins = Todo.objects.create(title="Bins", due_date=MONDAY, repeat="weekly")
+        bins = self.make_todo(title="Bins", due_date=MONDAY, repeat="weekly")
         self.client.post(done(bins), {"done": "1"})
         bins.refresh_from_db()
         copy = bins.next_todo
         # Send exactly what the edit page's form sends, with a new date.
         page = self.client.get(reverse("todo_edit", args=[copy.pk]))
-        (form,) = [f for f in page_forms(page) if f.method == "post"]
+        (form,) = page_post_forms(page)
         self.assertEqual(form.fields["repeat"], ["weekly"])
         response = self.client.post(form.action, form.data(due_date="2026-10-14"))
         self.assertEqual(response.status_code, 302)
@@ -513,7 +516,7 @@ class RepeatFormTests(TestCase):
         self.assertEqual(bins.next_todo, copy)
 
     def test_edit_page_shows_the_saved_repeat(self):
-        rent = Todo.objects.create(
+        rent = self.make_todo(
             title="Pay rent", due_date=date(2026, 10, 31), repeat="monthly"
         )
         response = self.client.get(reverse("todo_edit", args=[rent.pk]))
@@ -525,7 +528,7 @@ class RepeatFormTests(TestCase):
         )
 
     def test_edit_removing_the_date_of_a_repeating_todo_is_rejected(self):
-        bins = Todo.objects.create(title="Bins", due_date=MONDAY, repeat="weekly")
+        bins = self.make_todo(title="Bins", due_date=MONDAY, repeat="weekly")
         response = self.client.post(
             reverse("todo_edit", args=[bins.pk]),
             {"title": "Bins", "due_date": "", "priority": "2", "repeat": "weekly"},
@@ -541,14 +544,14 @@ class RepeatFormTests(TestCase):
         self.assertEqual(bins.due_date, MONDAY)
 
 
-class RepeatPaneTests(TestCase):
+class RepeatPaneTests(LoggedInTestCase):
     """The details pane shows a Repeats row, only for a to-do that repeats."""
 
     def created(self, todo):
         return show_date(timezone.localtime(todo.created_at).date())
 
     def test_pane_shows_the_repeat(self):
-        bins = Todo.objects.create(title="Bins", due_date=MONDAY, repeat="weekly")
+        bins = self.make_todo(title="Bins", due_date=MONDAY, repeat="weekly")
         response = self.client.get(f"/?selected={bins.pk}")
         pane = pane_element(
             bins,
@@ -561,7 +564,7 @@ class RepeatPaneTests(TestCase):
         self.assertContains(response, pane, count=1, html=True)
 
     def test_pane_has_no_repeats_row_for_a_todo_that_does_not_repeat(self):
-        milk = Todo.objects.create(title="Buy milk", due_date=MONDAY)
+        milk = self.make_todo(title="Buy milk", due_date=MONDAY)
         response = self.client.get(f"/?selected={milk.pk}")
         # The whole pane, exactly: it has no Repeats row.
         pane = pane_element(
@@ -572,9 +575,7 @@ class RepeatPaneTests(TestCase):
     def test_pane_of_a_completed_repeating_todo_still_shows_the_repeat(self):
         # The pane shows every field. The list hides the repeat of a completed
         # to-do (its next copy repeats now), but the field is still saved.
-        bins = Todo.objects.create(
-            title="Bins", due_date=MONDAY, repeat="weekly", done=True
-        )
+        bins = self.make_todo(title="Bins", due_date=MONDAY, repeat="weekly", done=True)
         response = self.client.get(f"/?selected={bins.pk}")
         pane = pane_element(
             bins,
@@ -587,7 +588,7 @@ class RepeatPaneTests(TestCase):
         self.assertContains(response, pane, count=1, html=True)
 
 
-class RepeatingStepsTests(TestCase):
+class RepeatingStepsTests(LoggedInTestCase):
     """Steps (15) and repeating (19): Done copies the steps, all not done.
 
     Owner decisions: the steps come back with the next copy; a change to a
@@ -595,9 +596,7 @@ class RepeatingStepsTests(TestCase):
     """
 
     def make_clean(self, steps=(("Kitchen", True), ("Floor", False))):
-        clean = Todo.objects.create(
-            title="Weekly clean", due_date=MONDAY, repeat="weekly"
-        )
+        clean = self.make_todo(title="Weekly clean", due_date=MONDAY, repeat="weekly")
         for title, is_done in steps:
             Subtask.objects.create(todo=clean, title=title, done=is_done)
         return clean

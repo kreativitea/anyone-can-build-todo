@@ -1,11 +1,11 @@
 """Notes on a to-do (feature 7): the add form, saving, and the details pane."""
 
-from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
 from todos.models import Todo
 from todos.tests.integration.helpers import (
+    LoggedInTestCase,
     page_parts,
     page_without_csrf,
     pane_element,
@@ -47,7 +47,7 @@ def selected_page(client, todo):
     return client.get(f"/?selected={todo.pk}")
 
 
-class NotesTests(TestCase):
+class NotesTests(LoggedInTestCase):
     # New behaviour: these fail before the change.
 
     def test_add_a_todo_with_notes(self):
@@ -114,7 +114,7 @@ class NotesTests(TestCase):
         # "\r\n" is how old data, or data saved from the shell, could look.
         for notes in ["Low-fat\nOr soy", "Low-fat\r\nOr soy"]:
             with self.subTest(notes=notes):
-                todo = Todo.objects.create(title="Buy milk", notes=notes)
+                todo = self.make_todo(title="Buy milk", notes=notes)
                 response = selected_page(self.client, todo)
                 self.assertContains(
                     response,
@@ -126,7 +126,7 @@ class NotesTests(TestCase):
 
     def test_pane_notes_are_escaped(self):
         notes = "<script>alert(1)</script>"
-        todo = Todo.objects.create(title="Buy milk", notes=notes)
+        todo = self.make_todo(title="Buy milk", notes=notes)
         response = selected_page(self.client, todo)
         # pane_for escapes it: "&lt;script&gt;...", shown as text.
         self.assertContains(response, pane_for(todo, notes=notes), count=1, html=True)
@@ -135,7 +135,7 @@ class NotesTests(TestCase):
         self.assertNotIn("script", parts.pane_tags)
 
     def test_notes_are_not_on_the_list(self):
-        todo = Todo.objects.create(title="Buy milk", notes="Low-fat")
+        todo = self.make_todo(title="Buy milk", notes="Low-fat")
         with_notes = page_without_csrf(self.client.get("/"))
         Todo.objects.filter(pk=todo.pk).update(notes="")
         without_notes = page_without_csrf(self.client.get("/"))
@@ -144,7 +144,7 @@ class NotesTests(TestCase):
     # Protects what already works: passes before the change too.
 
     def test_pane_without_notes_has_no_notes_row(self):
-        todo = Todo.objects.create(title="Buy milk")
+        todo = self.make_todo(title="Buy milk")
         response = selected_page(self.client, todo)
         self.assertContains(response, pane_for(todo), count=1, html=True)
         self.assertIsNone(page_parts(response).pane_notes)

@@ -2,13 +2,13 @@ from datetime import date, timedelta
 
 from django.db import connection
 from django.db.models import QuerySet
-from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
 
 from todos.models import Todo
 from todos.tests.integration.helpers import (
+    LoggedInTestCase,
     page_parts,
     pane_element,
     show_date,
@@ -53,10 +53,6 @@ def nav(chosen, selected=None):
     return NAV.format(links=links)
 
 
-def make(title, **fields):
-    return Todo.objects.create(title=title, **fields)
-
-
 def make_earlier(todo, than):
     """Set `todo`'s date added to just before `than`'s.
 
@@ -68,7 +64,10 @@ def make_earlier(todo, than):
     Todo.objects.filter(pk=todo.pk).update(created_at=earlier)
 
 
-class SortTests(TestCase):
+class SortTests(LoggedInTestCase):
+    def make(self, title, **fields):
+        return self.make_todo(title=title, **fields)
+
     def titles(self, url):
         """The titles on the page at `url`, in the order the page shows them."""
         return page_parts(self.client.get(url)).titles
@@ -77,61 +76,61 @@ class SortTests(TestCase):
     # FIRST is made LAST, so the old order (oldest first) can never pass.
 
     def test_sort_by_due_date(self):
-        make("No date")
-        make("Later", due_date=date(2026, 10, 20))
-        make("Soon", due_date=date(2026, 10, 12))
+        self.make("No date")
+        self.make("Later", due_date=date(2026, 10, 20))
+        self.make("Soon", due_date=date(2026, 10, 12))
         self.assertEqual(self.titles("/?sort=due"), ["Soon", "Later", "No date"])
 
     def test_due_date_ties_go_high_priority_first(self):
-        make("Low", due_date=date(2026, 10, 12), priority=LOW)
-        make("High", due_date=date(2026, 10, 12), priority=HIGH)
+        self.make("Low", due_date=date(2026, 10, 12), priority=LOW)
+        self.make("High", due_date=date(2026, 10, 12), priority=HIGH)
         self.assertEqual(self.titles("/?sort=due"), ["High", "Low"])
 
     def test_due_and_priority_ties_keep_date_added_order(self):
-        b = make("B", due_date=date(2026, 10, 12))
-        a = make("A", due_date=date(2026, 10, 12))
+        b = self.make("B", due_date=date(2026, 10, 12))
+        a = self.make("A", due_date=date(2026, 10, 12))
         make_earlier(a, than=b)  # id order: B, A. Date added: A, B.
         self.assertEqual(self.titles("/?sort=due"), ["A", "B"])
 
     def test_sort_by_priority(self):
-        make("Low", priority=LOW)
-        make("Medium", priority=MEDIUM)
-        make("High", priority=HIGH)
+        self.make("Low", priority=LOW)
+        self.make("Medium", priority=MEDIUM)
+        self.make("High", priority=HIGH)
         self.assertEqual(self.titles("/?sort=priority"), ["High", "Medium", "Low"])
 
     def test_priority_ties_go_soonest_due_first(self):
-        make("Low", priority=LOW)
-        make("High no date", priority=HIGH)
-        make("High later", priority=HIGH, due_date=date(2026, 10, 20))
-        make("High soon", priority=HIGH, due_date=date(2026, 10, 12))
+        self.make("Low", priority=LOW)
+        self.make("High no date", priority=HIGH)
+        self.make("High later", priority=HIGH, due_date=date(2026, 10, 20))
+        self.make("High soon", priority=HIGH, due_date=date(2026, 10, 12))
         self.assertEqual(
             self.titles("/?sort=priority"),
             ["High soon", "High later", "High no date", "Low"],
         )
 
     def test_priority_and_due_ties_keep_date_added_order(self):
-        b = make("B", priority=HIGH)
-        a = make("A", priority=HIGH)
+        b = self.make("B", priority=HIGH)
+        a = self.make("A", priority=HIGH)
         make_earlier(a, than=b)  # id order: B, A. Date added: A, B.
         self.assertEqual(self.titles("/?sort=priority"), ["A", "B"])
 
     def test_sort_by_title_ignores_case(self):
-        make("cherry")
-        make("Banana")
-        make("apple")
+        self.make("cherry")
+        self.make("Banana")
+        self.make("apple")
         self.assertEqual(self.titles("/?sort=title"), ["apple", "Banana", "cherry"])
 
     def test_title_ties_keep_date_added_order(self):
-        b = make("Buy milk")
-        a = make("buy milk")
+        b = self.make("Buy milk")
+        a = self.make("buy milk")
         make_earlier(a, than=b)  # id order: B, A. Date added: A, B.
-        make("apple")
+        self.make("apple")
         self.assertEqual(self.titles("/?sort=title"), ["apple", "buy milk", "Buy milk"])
 
     def test_sort_by_title_hiragana(self):
-        make("うどん")
-        make("いちご")
-        make("あめ")
+        self.make("うどん")
+        self.make("いちご")
+        self.make("あめ")
         self.assertEqual(self.titles("/?sort=title"), ["あめ", "いちご", "うどん"])
 
     def test_sort_links_are_on_the_page(self):
@@ -150,7 +149,7 @@ class SortTests(TestCase):
                 self.assertEqual(page_parts(response).current_links, ["All"])
 
     def test_sort_row_stays_when_the_pane_is_open(self):
-        todo = make("Buy milk")
+        todo = self.make("Buy milk")
         response = self.client.get(f"/?sort=priority&selected={todo.pk}")
         self.assertEqual(page_parts(response).panes, ["Details"])
         self.assertContains(
@@ -158,7 +157,7 @@ class SortTests(TestCase):
         )
 
     def test_pane_keeps_the_sort(self):
-        todo = make("Buy milk")
+        todo = self.make("Buy milk")
         response = self.client.get(f"/?sort=due&selected={todo.pk}")
         todo.refresh_from_db()
         pane = pane_element(
@@ -170,16 +169,16 @@ class SortTests(TestCase):
         self.assertContains(response, pane, count=1, html=True)
 
     def test_edit_page_cancel_keeps_the_sort(self):
-        todo = make("Buy milk")
+        todo = self.make("Buy milk")
         response = self.client.get(f"/{todo.pk}/edit/?show=active&sort=due")
         self.assertContains(
             response, '<a href="/?show=active&amp;sort=due">Cancel</a>', html=True
         )
 
     def test_every_sort_is_one_list_query(self):
-        make("Low", priority=LOW, due_date=date(2026, 10, 12))
-        make("High", priority=HIGH)
-        make("Medium", done=True)
+        self.make("Low", priority=LOW, due_date=date(2026, 10, 12))
+        self.make("High", priority=HIGH)
+        self.make("Medium", done=True)
         with CaptureQueriesContext(connection) as plain:
             self.client.get("/")
         for value, _label, _order in SORTS:
@@ -192,7 +191,7 @@ class SortTests(TestCase):
                 self.assertIsInstance(response.context["todos"], QuerySet)
 
     def test_sort_is_kept_everywhere(self):
-        todo = make("Buy milk")
+        todo = self.make("Buy milk")
         response = self.client.get("/?show=active&q=milk&sort=due")
         query = "?show=active&q=milk&sort=due"
         parts = [
@@ -210,8 +209,8 @@ class SortTests(TestCase):
                 self.assertContains(response, part, count=1, html=True)
 
     def test_every_post_form_keeps_the_sort(self):
-        active = make("Buy milk")
-        make("Call home", done=True)
+        active = self.make("Buy milk")
+        self.make("Call home", done=True)
         query = "?show=active&sort=title"
         response = self.client.get("/" + query)
         self.assertEqual(
@@ -226,8 +225,8 @@ class SortTests(TestCase):
 
     def test_post_goes_back_with_the_sort(self):
         query = "?show=active&sort=due"
-        todo = make("Buy milk")
-        other = make("Call home")
+        todo = self.make("Buy milk")
+        other = self.make("Call home")
         cases = [
             ("toggle", reverse("todo_toggle", args=[todo.pk]), {"done": "1"}),
             ("delete", reverse("todo_delete", args=[other.pk]), {}),
@@ -245,10 +244,10 @@ class SortTests(TestCase):
                 self.assertEqual(response["Location"], "/" + query)
 
     def test_sort_filter_and_search_together(self):
-        make("Milk later", due_date=date(2026, 10, 20))
-        make("Milk done", due_date=date(2026, 10, 1), done=True)
-        make("Call home", due_date=date(2026, 10, 5))
-        make("Milk soon", due_date=date(2026, 10, 12))
+        self.make("Milk later", due_date=date(2026, 10, 20))
+        self.make("Milk done", due_date=date(2026, 10, 1), done=True)
+        self.make("Call home", due_date=date(2026, 10, 5))
+        self.make("Milk soon", due_date=date(2026, 10, 12))
         self.assertEqual(
             self.titles("/?show=active&q=milk&sort=due"), ["Milk soon", "Milk later"]
         )
@@ -308,16 +307,16 @@ class SortTests(TestCase):
             with self.subTest(sort=value):
                 Todo.objects.all().delete()
                 for title, fields in todos:
-                    make(title, **fields)
+                    self.make(title, **fields)
                 self.assertEqual(self.titles(f"/?sort={value}"), expected)
 
     # Sort: protect what already works.
 
     def test_default_is_oldest_first(self):
         # id order: B, A, C. Date added: C, A, B.
-        b = make("B")
-        a = make("A")
-        c = make("C")
+        b = self.make("B")
+        a = self.make("A")
+        c = self.make("C")
         make_earlier(a, than=b)
         make_earlier(c, than=a)
         for url in ["/", "/?sort=created", "/?sort=banana"]:
@@ -325,7 +324,7 @@ class SortTests(TestCase):
                 self.assertEqual(self.titles(url), ["C", "A", "B"])
 
     def test_redirect_drops_a_bad_sort(self):
-        todo = make("Buy milk")
+        todo = self.make("Buy milk")
         toggle = reverse("todo_toggle", args=[todo.pk])
         for query in [
             "?sort=banana",

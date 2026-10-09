@@ -10,10 +10,16 @@
     .errorlist { margin: 0; padding: 0; list-style: none; color: #b00020; }
     .errorlist li { padding: 0; border: 0; }
     button { padding: 0.4rem 0.8rem; font-size: 0.9rem; cursor: pointer; }
+    .account { text-align: right; color: #555; font-size: 0.9rem; }
+    .account form { display: inline; margin-left: 0.5rem; }
     {% block style %}{% endblock %}
   </style>
 </head>
 <body>
+  {# The account bar: on every page, only for a logged-in person. Log out is a POST. #}
+  {% if user.is_authenticated %}
+    <div class="account">Logged in as <strong>{{ user.username }}</strong><form method="post" action="{% url 'logout' %}">{% csrf_token %}<button type="submit">Log out</button></form></div>
+  {% endif %}
   {% block content %}{% endblock %}
 </body>
 </html>

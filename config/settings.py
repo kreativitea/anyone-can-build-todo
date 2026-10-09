@@ -13,6 +13,8 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 import os
 from pathlib import Path
 
+from django.core.exceptions import ImproperlyConfigured
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -28,6 +30,14 @@ SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "django-insecure-only-for-your-
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.environ.get("DJANGO_DEBUG", "True") == "True"
+
+# The secret key signs the log-in sessions. A live server must never use the
+# key above, which is in git: without its own key, it refuses to start.
+# An empty or blank key, or a "django-insecure-" one (like the default above),
+# counts as no key.
+_live_key = os.environ.get("DJANGO_SECRET_KEY", "").strip()
+if not DEBUG and (not _live_key or _live_key.startswith("django-insecure-")):
+    raise ImproperlyConfigured("Set DJANGO_SECRET_KEY on a live server.")
 
 # The addresses this site answers to, separated by commas.
 ALLOWED_HOSTS = os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
@@ -69,11 +79,18 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    # Every page needs log-in. After AuthenticationMiddleware, which finds the user.
+    "config.middleware.LoginRequired",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
+
+# Accounts: where to send a person to log in, and where to go after.
+LOGIN_URL = "login"
+LOGIN_REDIRECT_URL = "todo_list"
+LOGOUT_REDIRECT_URL = "login"
 
 TEMPLATES = [
     {

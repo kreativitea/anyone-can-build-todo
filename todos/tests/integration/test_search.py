@@ -1,12 +1,11 @@
 from urllib.parse import urlencode
 
 from django.db import connection
-from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 
 from todos.models import Todo
-from todos.tests.integration.helpers import page_parts, title_element
+from todos.tests.integration.helpers import LoggedInTestCase, page_parts, title_element
 
 # ギュウニュウ in normal katakana, written with code points so that no editor
 # can change how its letters are stored.
@@ -43,16 +42,16 @@ def query(**params):
     return "?" + urlencode(params) if params else ""
 
 
-def make(*titles, **fields):
-    """Make one to-do per title, in order, and return them."""
-    return [Todo.objects.create(title=title, **fields) for title in titles]
+class SearchTests(LoggedInTestCase):
+    def make(self, *titles, **fields):
+        """Make one of ana's to-dos per title, in order, and return them."""
+        return [self.make_todo(title=title, **fields) for title in titles]
 
-
-class SearchTests(TestCase):
     def setUp(self):
-        self.buy = Todo.objects.create(title="Buy milk")
-        self.cow = Todo.objects.create(title="Milk the cow", done=True)
-        self.call = Todo.objects.create(title="Call home")
+        super().setUp()
+        self.buy = self.make_todo(title="Buy milk")
+        self.cow = self.make_todo(title="Milk the cow", done=True)
+        self.call = self.make_todo(title="Call home")
 
     def search(self, q, **other):
         """Open the list with this search. The test client encodes the address."""
@@ -80,13 +79,13 @@ class SearchTests(TestCase):
 
     def test_search_finds_japanese(self):
         Todo.objects.all().delete()
-        milk, _ = make("牛乳を買う", "Call home")
+        milk, _ = self.make("牛乳を買う", "Call home")
         response = self.search("牛乳")
         self.assert_shown(response, [milk], query(q="牛乳"))
 
     def test_wide_letters_find_normal_letters(self):
         Todo.objects.all().delete()
-        buy, gyuunyuu, _ = make("Buy milk", GYUUNYUU, "Call home")
+        buy, gyuunyuu, _ = self.make("Buy milk", GYUUNYUU, "Call home")
         cases = [
             ("ｍｉｌｋ", buy),
             ("ＭＩＬＫ", buy),
@@ -99,13 +98,13 @@ class SearchTests(TestCase):
 
     def test_typed_wide_letters_find_a_wide_title(self):
         Todo.objects.all().delete()
-        tea, buy, _ = make("ＭＩＬＫ tea", "Buy milk", "Call home")
+        tea, buy, _ = self.make("ＭＩＬＫ tea", "Buy milk", "Call home")
         response = self.search("ＭＩＬＫ")
         self.assert_shown(response, [tea, buy], query(q="ＭＩＬＫ"))
 
     def test_search_treats_wildcards_as_text(self):
         Todo.objects.all().delete()
-        done, underscore, _, _ = make(
+        done, underscore, _, _ = self.make(
             "100% done", "file_name", "file-name", "Call home"
         )
         # `file-name` matters: an unescaped `_` would match its `-`.
@@ -117,7 +116,7 @@ class SearchTests(TestCase):
 
     def test_search_keeps_the_joiners(self):
         Todo.objects.all().delete()
-        persian, coder, _ = make(PERSIAN, f"{CODER} review", "Call home")
+        persian, coder, _ = self.make(PERSIAN, f"{CODER} review", "Call home")
         for q, found in [(PERSIAN, persian), (CODER, coder)]:
             with self.subTest(q=q):
                 response = self.search(q)
@@ -125,15 +124,15 @@ class SearchTests(TestCase):
 
     def test_search_finds_words_only_in_the_notes(self):
         Todo.objects.all().delete()
-        shopping = Todo.objects.create(title="Shopping", notes="milk and eggs")
-        Todo.objects.create(title="Call home")
+        shopping = self.make_todo(title="Shopping", notes="milk and eggs")
+        self.make_todo(title="Call home")
         response = self.search("MILK")
         self.assert_shown(response, [shopping], query(q="MILK"), hints=[shopping])
 
     def test_wide_letters_find_words_in_the_notes(self):
         Todo.objects.all().delete()
-        shopping = Todo.objects.create(title="Shopping", notes="milk and eggs")
-        Todo.objects.create(title="Call home")
+        shopping = self.make_todo(title="Shopping", notes="milk and eggs")
+        self.make_todo(title="Call home")
         response = self.search("ｍｉｌｋ")
         self.assert_shown(response, [shopping], query(q="ｍｉｌｋ"), hints=[shopping])
 
@@ -142,7 +141,7 @@ class SearchTests(TestCase):
         # Shopping matches only in its notes: the hint.
         self.buy.notes = "the milk in the blue box"
         self.buy.save()
-        shopping = Todo.objects.create(title="Shopping", notes="milk and eggs")
+        shopping = self.make_todo(title="Shopping", notes="milk and eggs")
         # "Milk the cow" is completed, so it comes last (completed go last).
         with self.subTest("a search"):
             response = self.search("milk")
@@ -284,7 +283,7 @@ class SearchTests(TestCase):
             url = reverse(name, args=args) + "?" + urlencode(params)
             return self.client.post(url, data or {})
 
-        extra = Todo.objects.create(title="Milk to delete")
+        extra = self.make_todo(title="Milk to delete")
         toggle = ("todo_toggle", [self.buy.pk])
         done = {"done": "1"}
         cases = [
@@ -364,7 +363,7 @@ class SearchTests(TestCase):
 
     def test_search_costs_no_extra_query(self):
         # The hint comes from the same query as the list (an annotation).
-        Todo.objects.create(title="Shopping", notes="milk and eggs")
+        self.make_todo(title="Shopping", notes="milk and eggs")
         with CaptureQueriesContext(connection) as without:
             self.client.get("/")
         with CaptureQueriesContext(connection) as with_search:
@@ -382,7 +381,7 @@ class SearchTests(TestCase):
 
     def test_delete_completed_ignores_the_search(self):
         Todo.objects.all().delete()
-        buy, call = make("Buy milk", "Call home", done=True)
+        buy, call = self.make("Buy milk", "Call home", done=True)
         response = self.search("banana")
         # The button and the ids only: the form's address is checked by
         # test_every_post_form_keeps_the_search.

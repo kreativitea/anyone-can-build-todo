@@ -8,7 +8,49 @@ import re
 from html.parser import HTMLParser
 from typing import NamedTuple
 
+from django.contrib.auth import get_user_model
+from django.test import Client, TestCase
 from django.utils.html import escape
+
+from todos.models import Todo
+
+# A test value only, for test users. Not a real password.
+TEST_PASSWORD = "plum-tree-river-42"
+
+# The account addresses (17).
+LOGIN_URL = "/accounts/login/"
+SIGNUP_URL = "/accounts/signup/"
+LOGOUT_URL = "/accounts/logout/"
+
+
+def make_user(username="ana"):
+    """A saved user with the test password."""
+    return get_user_model().objects.create_user(username, password=TEST_PASSWORD)
+
+
+class LoggedInTestCase(TestCase):
+    """A test where "ana" is logged in. self.make_todo() makes her to-dos."""
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        cls.user = make_user("ana")
+
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.user)
+
+    def csrf_client(self):
+        """A second client, logged in as ana, that checks CSRF like a real browser."""
+        client = Client(enforce_csrf_checks=True)
+        client.force_login(self.user)
+        return client
+
+    def make_todo(self, **fields):
+        """A saved to-do, owned by ana unless `owner` says otherwise."""
+        fields.setdefault("owner", self.user)
+        return Todo.objects.create(**fields)
+
 
 CSRF_INPUT = re.compile(
     r'<input type="hidden" name="csrfmiddlewaretoken" value="[^"]*">'
@@ -257,6 +299,15 @@ def page_forms(response):
     return PageForms(response.content.decode(), page_path(response)).forms
 
 
+def page_post_forms(response):
+    """The POST forms of the page itself: not the account bar's Log out form."""
+    return [
+        form
+        for form in page_forms(response)
+        if form.method == "post" and form.action != LOGOUT_URL
+    ]
+
+
 class Row(NamedTuple):
     """One <li> of the list: its `id`, its classes, and the title in it."""
 
@@ -270,6 +321,8 @@ class PageParts(HTMLParser):
 
     `post_actions` is the `action` of every form with method="post", read by
     `PageForms`, so a form with no action counts as the page's own address.
+    The account bar's Log out form is not in it: it is on every page, and
+    test_accounts.py checks it.
     `titles` is the title of every to-do shown, in order: the text of each
     <span class="title">, and of an <a> directly inside it (the title link).
     Other tags inside the span (the due date is a <small>) are not the title.
@@ -291,7 +344,7 @@ class PageParts(HTMLParser):
         self.post_actions = [
             form.action
             for form in PageForms(html, page_path).forms
-            if form.method == "post"
+            if form.method == "post" and form.action != LOGOUT_URL
         ]
         self.html_lang = None
         self.titles = []
@@ -530,3 +583,70 @@ def link_href(response, name):
     if len(hrefs) != 1:
         raise AssertionError(f"{len(hrefs)} links named {name!r}, not 1")
     return hrefs[0]
+
+
+# Accounts (17).
+
+
+def account_bar(username):
+    """The account bar at the top of every page, exactly, without the CSRF token."""
+    return (
+        '<div class="account">'
+        f"Logged in as <strong>{escape(username)}</strong>"
+        f'<form method="post" action="{LOGOUT_URL}">'
+        '<button type="submit">Log out</button></form>'
+        "</div>"
+    )
+
+
+class ClassCounter(HTMLParser):
+    """Counts the elements with one tag and one exact class, like <div class="account">."""
+
+    def __init__(self, html, tag, class_name):
+        super().__init__()
+        self.tag = tag
+        self.class_name = class_name
+        self.count = 0
+        self.feed(html)
+
+    def handle_starttag(self, tag, attrs):
+        if tag == self.tag and dict(attrs).get("class") == self.class_name:
+            self.count += 1
+
+
+def count_elements(response, tag, class_name):
+    """How many <tag class="class_name"> elements the page has."""
+    return ClassCounter(response.content.decode(), tag, class_name).count
+
+
+def send_form(client, page, button_name, **typed):
+    """Press the one button named `button_name` on `page`, like a browser.
+
+    The form's own fields (the CSRF token, `next`) are sent with what was
+    typed. Follows the redirects and returns the last page.
+    """
+    pairs = [
+        (form, button)
+        for form in page_forms(page)
+        for button in form.buttons
+        if button.accessible_name == button_name
+    ]
+    if len(pairs) != 1:
+        raise AssertionError(f"{len(pairs)} buttons named {button_name!r}, not 1")
+    form, button = pairs[0]
+    return client.post(form.action, form.data(button, **typed), follow=True)
+
+
+def log_in(client, username, password=TEST_PASSWORD):
+    """Log in through the real log-in page, like a person, and return the list.
+
+    Opening "/" shows the log-in page. Fill in the form, press "Log in", and
+    land on the list.
+    """
+    page = client.get("/", follow=True)
+    if page.redirect_chain != [(f"{LOGIN_URL}?next=/", 302)]:
+        raise AssertionError(f"/ did not show the log-in page: {page.redirect_chain}")
+    page = send_form(client, page, "Log in", username=username, password=password)
+    if page.redirect_chain != [("/", 302)]:
+        raise AssertionError(f"Log in did not land on the list: {page.redirect_chain}")
+    return page

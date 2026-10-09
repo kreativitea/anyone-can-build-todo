@@ -1,12 +1,12 @@
 from datetime import date
 
 from django.db import connection, transaction
-from django.test import Client, TestCase
 from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 
 from todos.models import Subtask, Todo
 from todos.tests.integration.helpers import (
+    LoggedInTestCase,
     delete_completed_form,
     list_footer,
     page_forms,
@@ -14,7 +14,7 @@ from todos.tests.integration.helpers import (
 )
 
 
-class TodoTests(TestCase):
+class TodoTests(LoggedInTestCase):
     def test_list_page_loads(self):
         response = self.client.get(reverse("todo_list"))
         self.assertEqual(response.status_code, 200)
@@ -45,7 +45,7 @@ class TodoTests(TestCase):
         self.assertEqual(Todo.objects.count(), 0)
 
     def test_toggle_marks_done_and_back(self):
-        todo = Todo.objects.create(title="Read chapter 3")
+        todo = self.make_todo(title="Read chapter 3")
         self.client.post(reverse("todo_toggle", args=[todo.pk]), {"done": "1"})
         todo.refresh_from_db()
         self.assertTrue(todo.done)
@@ -54,12 +54,12 @@ class TodoTests(TestCase):
         self.assertFalse(todo.done)
 
     def test_delete_removes_it(self):
-        todo = Todo.objects.create(title="Call home")
+        todo = self.make_todo(title="Call home")
         self.client.post(reverse("todo_delete", args=[todo.pk]))
         self.assertEqual(Todo.objects.count(), 0)
 
     def test_get_cannot_change_data(self):
-        todo = Todo.objects.create(title="Call home")
+        todo = self.make_todo(title="Call home")
         for url in [
             reverse("todo_add") + "?title=Buy+milk",
             reverse("todo_toggle", args=[todo.pk]),
@@ -127,7 +127,7 @@ class TodoTests(TestCase):
         self.assertContains(response, "This field is required.")
 
     def test_error_page_still_shows_the_list(self):
-        Todo.objects.create(title="Call home")
+        self.make_todo(title="Call home")
         response = self.client.post(
             reverse("todo_add"), {"title": "Buy milk", "due_date": "not-a-date"}
         )
@@ -150,7 +150,7 @@ class TodoTests(TestCase):
 
     def test_due_date_is_shown_on_the_list(self):
         # A day with one digit: "5 Oct", not "05 Oct".
-        Todo.objects.create(title="Buy milk", due_date=date(2026, 10, 5))
+        self.make_todo(title="Buy milk", due_date=date(2026, 10, 5))
         response = self.client.get(reverse("todo_list"))
         self.assertContains(response, "due 5 Oct 2026")
 
@@ -161,12 +161,12 @@ class TodoTests(TestCase):
         self.assertEqual(Todo.objects.get().title, "Buy milk")
 
     def test_no_due_date_shows_no_due_text(self):
-        Todo.objects.create(title="Buy milk")
+        self.make_todo(title="Buy milk")
         response = self.client.get(reverse("todo_list"))
         self.assertNotContains(response, 'class="due"')
 
 
-class CountTests(TestCase):
+class CountTests(LoggedInTestCase):
     """How many to-dos are left, shown under the list."""
 
     def assertFooter(self, response, text, completed=()):
@@ -181,30 +181,30 @@ class CountTests(TestCase):
     # Count: new behaviour.
 
     def test_count_is_shown_under_the_list(self):
-        Todo.objects.create(title="Buy milk")
-        Todo.objects.create(title="Call home")
-        read = Todo.objects.create(title="Read chapter 3", done=True)
+        self.make_todo(title="Buy milk")
+        self.make_todo(title="Call home")
+        read = self.make_todo(title="Read chapter 3", done=True)
         response = self.client.get(reverse("todo_list"))
         self.assertFooter(response, "2 items left", completed=[read])
 
     def test_count_comes_after_the_list(self):
-        Todo.objects.create(title="Buy milk")
+        self.make_todo(title="Buy milk")
         page = self.client.get(reverse("todo_list")).content.decode()
         self.assertIn('class="count"', page)
         self.assertGreater(page.index('class="count"'), page.index("</ul>"))
 
     def test_count_says_item_for_one(self):
-        Todo.objects.create(title="Buy milk")
+        self.make_todo(title="Buy milk")
         response = self.client.get(reverse("todo_list"))
         self.assertFooter(response, "1 item left")
 
     def test_count_says_items_for_zero(self):
-        milk = Todo.objects.create(title="Buy milk", done=True)
+        milk = self.make_todo(title="Buy milk", done=True)
         response = self.client.get(reverse("todo_list"))
         self.assertFooter(response, "0 items left", completed=[milk])
 
     def test_count_is_on_the_error_page(self):
-        Todo.objects.create(title="Call home")
+        self.make_todo(title="Call home")
         response = self.client.post(
             reverse("todo_add"), {"title": "Buy milk", "due_date": "not-a-date"}
         )
@@ -212,8 +212,8 @@ class CountTests(TestCase):
         self.assertFooter(response, "1 item left")
 
     def test_count_follows_done_and_undo(self):
-        first = Todo.objects.create(title="Buy milk")
-        Todo.objects.create(title="Call home")
+        first = self.make_todo(title="Buy milk")
+        self.make_todo(title="Call home")
         toggle = reverse("todo_toggle", args=[first.pk])
         response = self.client.post(toggle, {"done": "1"}, follow=True)
         self.assertFooter(response, "1 item left", completed=[first])
@@ -221,7 +221,7 @@ class CountTests(TestCase):
         self.assertFooter(response, "2 items left")
 
     def test_the_database_does_the_counting(self):
-        Todo.objects.create(title="Buy milk")
+        self.make_todo(title="Buy milk")
         with CaptureQueriesContext(connection) as queries:
             self.client.get(reverse("todo_list"))
         counts = [
@@ -242,11 +242,12 @@ class CountTests(TestCase):
         self.assertNotContains(response, 'class="list-footer"')
 
 
-class DeleteCompletedTests(TestCase):
+class DeleteCompletedTests(LoggedInTestCase):
     def setUp(self):
-        self.milk = Todo.objects.create(title="Buy milk", done=True)
-        self.home = Todo.objects.create(title="Call home", done=True)
-        self.read = Todo.objects.create(title="Read chapter 3")
+        super().setUp()
+        self.milk = self.make_todo(title="Buy milk", done=True)
+        self.home = self.make_todo(title="Call home", done=True)
+        self.read = self.make_todo(title="Read chapter 3")
 
     def post_ids(self, ids, client=None):
         return (client or self.client).post(
@@ -292,7 +293,7 @@ class DeleteCompletedTests(TestCase):
         one query per to-do or per step.
         """
         open_step = Subtask.objects.create(todo=self.read, title="Open page")
-        more = [Todo.objects.create(title=f"Done {n}", done=True) for n in range(3)]
+        more = [self.make_todo(title=f"Done {n}", done=True) for n in range(3)]
         for todo in [self.milk, self.home, *more]:
             for n in range(2):
                 Subtask.objects.create(todo=todo, title=f"Step {n}")
@@ -338,7 +339,7 @@ class DeleteCompletedTests(TestCase):
 
     def test_delete_completed_needs_the_csrf_token(self):
         response = self.post_ids(
-            [self.milk.pk, self.home.pk], client=Client(enforce_csrf_checks=True)
+            [self.milk.pk, self.home.pk], client=self.csrf_client()
         )
         self.assertEqual(response.status_code, 403)
         self.assertEqual(Todo.objects.count(), 3)
@@ -346,7 +347,7 @@ class DeleteCompletedTests(TestCase):
     def test_the_form_on_the_page_works_with_csrf_checks_on(self):
         # Like a real browser: read the form from the page, then send it back.
         # This fails if the form has no {% csrf_token %}.
-        client = Client(enforce_csrf_checks=True)
+        client = self.csrf_client()
         page = client.get(reverse("todo_list"))
         [(form, button)] = [
             (form, button)
@@ -384,7 +385,9 @@ class DeleteCompletedTests(TestCase):
         # Django refuses a form with more than 1,000 fields, and then nothing
         # is deleted. So the page offers the oldest 500; the next click
         # deletes the rest.
-        Todo.objects.bulk_create(Todo(title=f"Done {n}", done=True) for n in range(499))
+        Todo.objects.bulk_create(
+            Todo(title=f"Done {n}", done=True, owner=self.user) for n in range(499)
+        )
         oldest_first = list(
             Todo.objects.filter(done=True)
             .order_by("created_at", "pk")

@@ -2,15 +2,15 @@ import re
 from datetime import date
 from unittest.mock import patch
 
-from django.test import Client, TestCase
 from django.urls import reverse
 from django.utils import timezone
 
 from todos.forms import TodoEditForm
 from todos.models import Todo
 from todos.tests.integration.helpers import (
-    page_forms,
+    LoggedInTestCase,
     page_parts,
+    page_post_forms,
     page_without_csrf,
     pane_element,
     show_date,
@@ -45,9 +45,10 @@ def edit_link(todo, aria_title, query=""):
     )
 
 
-class EditTests(TestCase):
+class EditTests(LoggedInTestCase):
     def setUp(self):
-        self.todo = Todo.objects.create(title="Buy milk", due_date=date(2026, 10, 12))
+        super().setUp()
+        self.todo = self.make_todo(title="Buy milk", due_date=date(2026, 10, 12))
 
     def edit_url(self, query="", pk=None):
         return reverse("todo_edit", args=[pk or self.todo.pk]) + query
@@ -134,7 +135,7 @@ class EditTests(TestCase):
         ]
         for name, done, extra in cases:
             with self.subTest(name):
-                todo = Todo.objects.create(title="Call home", done=done)
+                todo = self.make_todo(title="Call home", done=done)
                 created_at = todo.created_at
                 self.client.post(
                     self.edit_url(pk=todo.pk), {"title": "Call mum", **extra}
@@ -163,7 +164,7 @@ class EditTests(TestCase):
                 self.assert_not_changed()
 
     def test_list_has_an_edit_link_for_each_todo(self):
-        tricky = Todo.objects.create(title='Say "hi" <b>')
+        tricky = self.make_todo(title='Say "hi" <b>')
         response = self.client.get(reverse("todo_list"))
         self.assertContains(response, edit_link(self.todo, "Buy milk"), html=True)
         self.assertContains(
@@ -251,7 +252,7 @@ class EditTests(TestCase):
                 self.assertEqual(page_parts(response).html_lang, "en")
 
     def test_edit_needs_the_csrf_token(self):
-        client = Client(enforce_csrf_checks=True)
+        client = self.csrf_client()
         response = client.post(self.edit_url(), {"title": "Hacked"})
         self.assertEqual(response.status_code, 403)
         self.assert_not_changed()
@@ -259,7 +260,7 @@ class EditTests(TestCase):
     def test_the_edit_form_works_with_csrf_checks_on(self):
         # Like a real browser: read the token from the page, then send it back.
         # This fails if the edit form has no {% csrf_token %}.
-        client = Client(enforce_csrf_checks=True)
+        client = self.csrf_client()
         page = client.get(self.edit_url()).content.decode()
         form = re.search(r'<form class="edit".*?</form>', page, re.S)
         self.assertIsNotNone(form, "the page has no edit form")
@@ -286,11 +287,12 @@ class EditTests(TestCase):
         )
 
 
-class EditPriorityAndNotesTests(TestCase):
+class EditPriorityAndNotesTests(LoggedInTestCase):
     """Priority (6) and notes (7) on the edit page: they come from TodoForm."""
 
     def setUp(self):
-        self.todo = Todo.objects.create(
+        super().setUp()
+        self.todo = self.make_todo(
             title="Buy milk",
             due_date=date(2026, 10, 12),
             priority=Todo.Priority.HIGH,
@@ -307,7 +309,7 @@ class EditPriorityAndNotesTests(TestCase):
     def edit_page_form(self):
         """The edit page's one POST form, read like a browser reads it."""
         page = self.client.get(self.url)
-        (form,) = [form for form in page_forms(page) if form.method == "post"]
+        (form,) = page_post_forms(page)
         return form
 
     def test_edit_page_shows_saved_priority_and_notes(self):
@@ -383,11 +385,12 @@ class EditPriorityAndNotesTests(TestCase):
         self.assert_saved(title="Buy oat milk", notes="2 litres")
 
 
-class EditLinkPlaceTests(TestCase):
+class EditLinkPlaceTests(LoggedInTestCase):
     """Where the Edit links are: on each row, and in the details pane."""
 
     def setUp(self):
-        self.todo = Todo.objects.create(
+        super().setUp()
+        self.todo = self.make_todo(
             title="Buy milk", due_date=date(2026, 10, 12), priority=Todo.Priority.HIGH
         )
 

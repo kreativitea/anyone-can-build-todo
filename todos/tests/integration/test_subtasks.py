@@ -5,7 +5,6 @@ In the code and the addresses the word is "subtask"; on the page it is "step".
 
 from django.contrib.auth import get_user_model
 from django.db import connection
-from django.test import Client, TestCase
 from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
@@ -13,6 +12,7 @@ from django.utils.html import escape
 
 from todos.models import Subtask, Todo
 from todos.tests.integration.helpers import (
+    LoggedInTestCase,
     page_parts,
     page_without_csrf,
     pane_element,
@@ -92,9 +92,10 @@ def list_row(todo, progress=""):
     )
 
 
-class SubtaskTests(TestCase):
+class SubtaskTests(LoggedInTestCase):
     def setUp(self):
-        self.cake = Todo.objects.create(title="Bake a cake")
+        super().setUp()
+        self.cake = self.make_todo(title="Bake a cake")
         self.flour = Subtask.objects.create(
             todo=self.cake, title="Buy flour", done=True
         )
@@ -159,7 +160,7 @@ class SubtaskTests(TestCase):
 
     def test_titles_are_escaped(self):
         # A title with HTML in it is shown as text, everywhere: never |safe.
-        todo = Todo.objects.create(title='<b>"x</b>')
+        todo = self.make_todo(title='<b>"x</b>')
         step = Subtask.objects.create(todo=todo, title='"><img src=x onerror=alert(1)>')
         page = self.client.get(self.steps_url(todo=todo))
         self.assertContains(
@@ -178,7 +179,7 @@ class SubtaskTests(TestCase):
         self.assertNotIn("<img", page.content.decode())
 
     def test_steps_page_with_no_steps(self):
-        shop = Todo.objects.create(title="Shop")
+        shop = self.make_todo(title="Shop")
         response = self.client.get(self.steps_url(todo=shop))
         self.assertInHTML(
             '<ul class="steps"><li>No steps yet.</li></ul>',
@@ -278,7 +279,7 @@ class SubtaskTests(TestCase):
 
     def test_step_of_another_todo_is_404(self):
         # Must pass UNCHANGED after accounts (17) and sharing (20).
-        shop = Todo.objects.create(title="Shop")
+        shop = self.make_todo(title="Shop")
         before = self.step_states()
         for name, data in [("subtask_done", {"done": "1"}), ("subtask_delete", {})]:
             with self.subTest(name=name):
@@ -300,7 +301,7 @@ class SubtaskTests(TestCase):
                 self.assertEqual(self.step_states(), before)
 
     def test_step_changes_need_the_csrf_token(self):
-        client = Client(enforce_csrf_checks=True)
+        client = self.csrf_client()
         before = self.step_states()
         cases = [
             ("subtask_add", None, {"title": "Buy sugar"}),
@@ -405,7 +406,7 @@ class SubtaskTests(TestCase):
         )
 
         # A to-do with no steps: its whole row, so no progress link in it.
-        shop = Todo.objects.create(title="Shop")
+        shop = self.make_todo(title="Shop")
         page = page_without_csrf(self.client.get("/"))
         self.assertInHTML(list_row(shop), page, count=1)
         self.assertInHTML(
@@ -416,7 +417,7 @@ class SubtaskTests(TestCase):
         with CaptureQueriesContext(connection) as one_row:
             self.client.get("/")
         for n in range(5):
-            todo = Todo.objects.create(title=f"Job {n}")
+            todo = self.make_todo(title=f"Job {n}")
             Subtask.objects.create(todo=todo, title="Step 1", done=True)
             Subtask.objects.create(todo=todo, title="Step 2")
         with CaptureQueriesContext(connection) as six_rows:
@@ -444,7 +445,7 @@ class SubtaskTests(TestCase):
         self.assertEqual(len(with_selected), len(without))
 
     def test_pane_of_a_todo_without_steps_has_no_steps_row(self):
-        shop = Todo.objects.create(title="Shop")
+        shop = self.make_todo(title="Shop")
         response = self.client.get(f"/?selected={shop.pk}")
         created = show_date(timezone.localtime(shop.created_at).date())
         pane = pane_element(shop, created=created, close_url="/")

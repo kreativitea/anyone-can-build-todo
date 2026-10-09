@@ -10,12 +10,13 @@ from todos.models import Todo
 class EditFormTests(SimpleTestCase):
     def test_edit_form_has_every_field_a_person_can_change(self):
         # Every model field a person may change, read from the model, so a new
-        # field feature needs no change here. "done" has its own button.
+        # field feature needs no change here. "done" has its own button. The
+        # owner is never in a form: the view sets it (accounts, 17).
         expected = {
             field.name
             for field in Todo._meta.get_fields()
             if getattr(field, "editable", False) and not field.auto_created
-        } - {"done"}
+        } - {"done", "owner"}
         self.assertEqual(set(forms.TodoEditForm().fields), expected)
 
     def test_edit_form_does_not_change_the_add_form(self):

@@ -1,9 +1,12 @@
 from django.contrib.auth.models import User
-from django.test import TestCase
 from django.urls import reverse
 
 from todos.models import Todo
-from todos.tests.integration.helpers import PRIORITY_SELECT, title_element
+from todos.tests.integration.helpers import (
+    PRIORITY_SELECT,
+    LoggedInTestCase,
+    title_element,
+)
 
 # The labels on the list, as whole elements.
 HIGH_LABEL = '<span class="priority high">High priority</span>'
@@ -28,7 +31,7 @@ TITLE_BOX_WITH_BUY_MILK = (
 )
 
 
-class PriorityTests(TestCase):
+class PriorityTests(LoggedInTestCase):
     # New behaviour.
 
     def test_list_page_has_a_priority_box(self):
@@ -60,8 +63,8 @@ class PriorityTests(TestCase):
         self.assertContains(response, TITLE_BOX_WITH_BUY_MILK, count=1, html=True)
 
     def test_high_label_is_shown_and_medium_has_none(self):
-        home = Todo.objects.create(title="Call home", priority=Todo.Priority.HIGH)
-        milk = Todo.objects.create(title="Buy milk", priority=Todo.Priority.MEDIUM)
+        home = self.make_todo(title="Call home", priority=Todo.Priority.HIGH)
+        milk = self.make_todo(title="Buy milk", priority=Todo.Priority.MEDIUM)
         response = self.client.get(reverse("todo_list"))
         self.assertContains(response, HIGH_LABEL, count=1, html=True)
         self.assertContains(response, MEDIUM_LABEL, count=0, html=True)
@@ -77,7 +80,7 @@ class PriorityTests(TestCase):
         self.assertContains(response, f"Call home</a> {HIGH_LABEL}", count=1)
 
     def test_low_label_is_shown(self):
-        read = Todo.objects.create(title="Read chapter 3", priority=Todo.Priority.LOW)
+        read = self.make_todo(title="Read chapter 3", priority=Todo.Priority.LOW)
         response = self.client.get(reverse("todo_list"))
         self.assertContains(response, LOW_LABEL, count=1, html=True)
         self.assertIn(LOW_LABEL, title_element(read))
@@ -92,7 +95,7 @@ class PriorityTests(TestCase):
         self.assertContains(response, PRIORITY_SELECT_LOW_CHOSEN, count=1, html=True)
 
     def test_admin_list_has_a_priority_column_and_filter(self):
-        Todo.objects.create(title="Call home", priority=Todo.Priority.HIGH)
+        self.make_todo(title="Call home", priority=Todo.Priority.HIGH)
         admin_user = User.objects.create_superuser("admin", "admin@example.com", None)
         self.client.force_login(admin_user)
         response = self.client.get(reverse("admin:todos_todo_changelist"))

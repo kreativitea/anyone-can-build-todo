@@ -12,7 +12,12 @@ from django.utils.html import escape
 
 from todos.models import Todo
 from todos.tests.integration.helpers import (
+    LOGIN_URL,
+    TEST_PASSWORD,
+    account_bar,
     link_href,
+    log_in,
+    make_user,
     page_forms,
     page_parts,
     page_without_csrf,
@@ -47,6 +52,7 @@ def todo_row(todo, done=False, repeat="", progress=""):
 class JourneyTests(TestCase):
     def setUp(self):
         # Like a real browser: a request without the page's CSRF token fails.
+        # Each journey starts logged out, and logs in through the real page.
         self.client = Client(enforce_csrf_checks=True)
 
     def press(self, page, button_text, lands_on=None, **typed):
@@ -80,7 +86,8 @@ class JourneyTests(TestCase):
         self.assertInHTML(row, page_without_csrf(page), count=1)
 
     def test_plan_and_finish_a_todo(self):
-        page = self.client.get(reverse("todo_list"))
+        make_user("ana")  # ana has an account
+        page = log_in(self.client, "ana")
         self.assert_list(page, EMPTY)
 
         # The priority is not typed: the form sends the option the page selected.
@@ -110,7 +117,8 @@ class JourneyTests(TestCase):
         self.assert_list(page, EMPTY)
 
     def test_a_high_priority_todo_keeps_its_label_when_done(self):
-        page = self.client.get(reverse("todo_list"))
+        make_user("ana")  # ana has an account
+        page = log_in(self.client, "ana")
 
         page = self.press(page, "Add", title="Pay rent", priority="3")
         rent = Todo.objects.get()
@@ -121,7 +129,8 @@ class JourneyTests(TestCase):
         self.assert_list(page, todo_row(rent, done=True))
 
     def test_a_weekly_todo_comes_back(self):
-        page = self.client.get(reverse("todo_list"))
+        make_user("ana")  # ana has an account
+        page = log_in(self.client, "ana")
 
         # Add a weekly to-do: choose "Every week" in the Repeats box.
         page = self.press(
@@ -154,7 +163,8 @@ class JourneyTests(TestCase):
         self.assertEqual(page_parts(page).titles, ["Take out the rubbish"])
 
     def test_split_a_todo_into_steps(self):
-        page = self.client.get(reverse("todo_list"))
+        make_user("ana")  # ana has an account
+        page = log_in(self.client, "ana")
         page = self.press(page, "Add", title="Bake a cake")
         cake = Todo.objects.get()
         steps_url = f"/{cake.pk}/subtasks/"
@@ -175,6 +185,7 @@ class JourneyTests(TestCase):
         self.assertEqual(
             names,
             [
+                "Log out",  # the account bar, at the top of every page
                 "Undo Buy flour",
                 "Delete Buy flour",
                 "Done Bake",
@@ -190,3 +201,44 @@ class JourneyTests(TestCase):
             'aria-label="1 of 2 steps for Bake a cake">1 of 2 steps</a></small>'
         )
         self.assert_list(page, todo_row(cake, progress=progress))
+
+    def test_sign_up_and_see_only_my_own_list(self):
+        # A visitor opens the site: the log-in page.
+        page = self.client.get("/", follow=True)
+        self.assertEqual(page.redirect_chain, [(f"{LOGIN_URL}?next=/", 302)])
+        self.assertContains(page, "<h1>Log in</h1>", html=True)
+
+        # New here: sign up as ana. Her list is empty.
+        page = self.sign_up(page, "ana")
+        self.assert_list(page, EMPTY)
+        self.assertInHTML(account_bar("ana"), page_without_csrf(page), count=1)
+
+        page = self.press(page, "Add", title="Buy milk")
+        self.assertEqual(page_parts(page).titles, ["Buy milk"])
+
+        page = self.press(page, "Log out", lands_on=LOGIN_URL)
+        self.assertContains(page, "<h1>Log in</h1>", html=True)
+
+        # Ben signs up on the same computer: his list is empty, no "Buy milk".
+        page = self.sign_up(page, "ben")
+        self.assert_list(page, EMPTY)
+        self.assertEqual(page_parts(page).titles, [])
+        self.assertInHTML(account_bar("ben"), page_without_csrf(page), count=1)
+        page = self.press(page, "Log out", lands_on=LOGIN_URL)
+
+        # Ana logs in again: her "Buy milk" is still there.
+        page = self.press(page, "Log in", username="ana", password=TEST_PASSWORD)
+        self.assertEqual(page_parts(page).titles, ["Buy milk"])
+        self.assertInHTML(account_bar("ana"), page_without_csrf(page), count=1)
+
+    def sign_up(self, page, username):
+        """From the log-in page: follow "Sign up", fill in the form, press Sign up."""
+        page = self.client.get(link_href(page, "Sign up"))
+        self.assertContains(page, "<h1>Sign up</h1>", html=True)
+        return self.press(
+            page,
+            "Sign up",
+            username=username,
+            password1=TEST_PASSWORD,
+            password2=TEST_PASSWORD,
+        )
