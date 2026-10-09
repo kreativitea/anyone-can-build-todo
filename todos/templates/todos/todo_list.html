@@ -14,9 +14,9 @@
     .errorlist li { padding: 0; border: 0; }
     ul { list-style: none; padding: 0; }
     li { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0; border-bottom: 1px solid #ddd; }
-    li .title { flex: 1; }
+    li .title { flex: 1; min-width: 0; overflow-wrap: anywhere; }
     li.done .title { text-decoration: line-through; color: #666; }
-    li .due { color: #666; font-size: 0.9rem; }
+    li .due { display: block; color: #666; font-size: 0.9rem; }
     button { padding: 0.4rem 0.8rem; font-size: 0.9rem; cursor: pointer; }
   </style>
 </head>
@@ -37,8 +37,7 @@
   <ul>
     {% for todo in todos %}
       <li class="{% if todo.done %}done{% endif %}">
-        <span class="title">{{ todo.title }}</span>
-        {% if todo.due_date %}<span class="due">due {{ todo.due_date|date:"j M Y" }}</span>{% endif %}
+        <span class="title">{{ todo.title }}{% if todo.due_date %}<small class="due">due {{ todo.due_date|date:"j M Y" }}</small>{% endif %}</span>
         <form method="post" action="{% url 'todo_toggle' todo.pk %}">
           {% csrf_token %}
           <button type="submit">{% if todo.done %}Undo{% else %}Done{% endif %}</button>
