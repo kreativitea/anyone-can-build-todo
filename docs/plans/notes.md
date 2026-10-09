@@ -1,7 +1,7 @@
 # Plan: notes on a to-do (feature 7)
 
-Status: **approved, in progress.** The parts that do not need 6 (priority) and 21 (details pane)
-are built; the rest waits for the rebase. See "What happened".
+Status: **approved, in progress.** Built, reviewed, and rebased on `main` with 6 (priority) and 21
+(details pane). See "What happened".
 
 The first version was checked by an adversarial review (a reviewer whose job is to find what is
 wrong), on Django 5.2.17. Every finding is fixed below. The third version follows an owner change:
@@ -689,3 +689,39 @@ fixes were made as new commits on the same branch:
    - Clicking the summary opens and closes the box; it does not put the cursor in the text box. The
      person clicks or tabs into it. This is the browser's normal `<details>` behaviour, and it is
      accepted.
+
+### After the rebase on 6 (priority) and 21 (details pane)
+
+`main` was at `23a9d62`, with 6 and 21 merged.
+
+1. **The rebase.** The clashes were combined, not chosen: `models.py` has `priority` then `notes`;
+   `fields` is `title`, `due_date`, `priority`, `notes` (one per line); the add form has the
+   priority box, then the notes `<details>` on its own row, then Add; the admin keeps 6's
+   `list_display` and `list_filter` and adds `formfield_overrides`; `test_forms.py` and
+   `test_models.py` keep both features' tests; `AGENTS.md` has 21's rows with the notes words
+   added.
+2. **The migration rule.** The old `0003_todo_notes.py` and `0004_alter_todo_notes.py` were deleted
+   in the rebase. `makemigrations todos -n todo_notes` made **one** new migration,
+   `0004_todo_notes.py`, after `0003_todo_priority` (`default=""` and `db_default=""`), not edited
+   by hand. Checked on a database at `0003_todo_priority` with three to-dos (High, Medium, Low):
+   `migrate` asked no question, the three were kept with their priorities, and every one has
+   `notes == ""`. `makemigrations --check` says "No changes detected".
+3. **The pane.** The `Notes` row is after `Created`, only when there are notes, through
+   `linebreaksbr` (escaped). `helpers.py` got `pane_element(..., notes=None)`, and
+   `PageParts.pane_notes` and `pane_tags`, with two small unit tests in `test_helpers.py`.
+   `test_notes.py` got `pane_for()` and the four pane tests.
+4. **Before the pane code:** `test_pane_shows_notes_with_line_breaks` (both subtests, `\n` and
+   `\r\n`) and `test_pane_notes_are_escaped` failed: the pane had no `Notes` row.
+   `test_notes_are_not_on_the_list` **passed** already (the field existed, and the list never
+   showed notes), so, like `test_pane_without_notes_has_no_notes_row`, it is proven by its
+   deliberate bug.
+5. **Deliberate bugs for the pane:** no `{% if %}` around the row →
+   `test_pane_without_notes_has_no_notes_row` failed (and five of 21's pane tests);
+   `|safe|linebreaksbr` → `test_pane_notes_are_escaped` failed; notes in a `<p>` on the list row →
+   `test_notes_are_not_on_the_list` failed. Each was put back.
+6. **The journeys** did not change: notes are optional, and the journeys use the test client.
+7. **Checked by eye at 1280 × 800** with headless Google Chrome (`--screenshot`), the worst case
+   selected: 500 characters, 20 line breaks, one 200-letter word. The long word breaks inside the
+   pane, all 20 lines show, the pane is no wider than its column, the page has no sideways scroll,
+   and the `Close` link is in view. (Screenshot `notes-pane-1280.png` in the builder's
+   scratchpad.)

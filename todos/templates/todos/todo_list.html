@@ -118,6 +118,8 @@
         <dt>Due</dt><dd>{% if selected.due_date %}{{ selected.due_date|date:"j M Y" }}{% else %}No due date{% endif %}</dd>
         <dt>Priority</dt><dd>{{ selected.get_priority_display }}</dd>
         <dt>Created</dt><dd>{{ selected.created_at|date:"j M Y" }}</dd>
+        {# Notes: only through Django's escaping. Never |safe here. #}
+        {% if selected.notes %}<dt>Notes</dt><dd class="notes">{{ selected.notes|linebreaksbr }}</dd>{% endif %}
       </dl>
       {# Every control that CHANGES something goes in details-actions; Close only reads. #}
       {# Edit (4): the pane's Edit link goes here, before Close. #}
