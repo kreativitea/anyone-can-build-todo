@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}To-do list{% endblock %}
+{% block title %}{% if q %}Search: {{ q }} – {% endif %}To-do list{% endblock %}
 
 {% block style %}
     form.add { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-bottom: 1.5rem; }
@@ -74,7 +74,7 @@
       <form class="search" role="search" method="get" action="{% url 'todo_list' %}">
         {% for name, value in search_keeps %}<input type="hidden" name="{{ name }}" value="{{ value }}">{% endfor %}
         <label for="search-q">Search to-dos</label>
-        <input type="search" id="search-q" name="q" value="{{ q }}" maxlength="{{ search_max_length }}">
+        <input type="search" id="search-q" name="q" value="{{ q }}" maxlength="{{ search_box_maxlength }}">
         <button type="submit">Search</button>
         {% if q %}<a href="{{ clear_search_url }}">Clear search</a>{% endif %}
       </form>

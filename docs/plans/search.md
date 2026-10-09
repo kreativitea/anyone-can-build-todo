@@ -68,7 +68,9 @@ their title (and, after the rebase, in their notes).
      "null" character `\0` or the bell `\a`;
    - **format characters** (category `Cf`), for example the zero-width space (U+200B) or the soft
      hyphen (U+00AD). You cannot see them, but a copied word often has one, and then it would never
-     match.
+     match. **Two format characters are kept** (changed after the code review): the zero-width
+     non-joiner (U+200C) and the zero-width joiner (U+200D). Persian, Hindi and other scripts need
+     them inside a word (`می‌خواهم`), and so do emoji like `👩‍💻`.
 
    Why `\0` matters: SQLite stops reading the search at a `\0`. So `milk\0zzz` is searched as
    "ends with `milk`": it finds `Buy milk` but not `milkshake`. And `\0` alone finds **every**
@@ -79,8 +81,11 @@ their title (and, after the rebase, in their notes).
    `"buy milk"`. This also trims the ends.
 3. **Cut to 200 characters.** 200 is the longest title (`Todo.title` has `max_length=200`). So any
    title can be pasted in whole, and the address stays short. The number comes from the model, not
-   written twice: `SEARCH_MAX_LENGTH = Todo._meta.get_field("title").max_length`. The search box
-   has the same `maxlength`. After the cut, a space at the end is removed.
+   written twice: `SEARCH_MAX_LENGTH = Todo._meta.get_field("title").max_length`. After the cut,
+   a space at the end is removed. The cut comes **last**, so removed characters do not count: 10
+   zero-width spaces and 200 `a` give 200 `a`. (Changed after the code review:) the search box's
+   `maxlength` is **twice** that, 400, because a browser counts `maxlength` in UTF-16 units, and
+   one character, like an emoji, can be two units. The server still cuts to 200 characters.
 4. **Drop it if empty.** `q=`, `q=%20%20`, `q=%E3%80%80` (a wide space) and `q=%00` all mean "no
    search".
 
@@ -153,6 +158,13 @@ database, like PostgreSQL, would find these:
 | `カイモノ` (katakana) | `かいもの` (hiragana) | **no** — NFKC does not change one into the other |
 
 We tried every row with the script in "How we tried it", with both forms of the word.
+
+**A title with an invisible character in it** (added after the code review). Titles are saved
+**as typed**: nothing is cleaned when a to-do is added (orchestrator decision). So a title that
+has a zero-width space, a soft hyphen, a BOM (U+FEFF) or a bidi control (a character that sets the
+reading direction, like U+202E) inside it is **not found by pasting its own text**: the search is
+cleaned, so the invisible character is gone from the search but still in the title. The two
+joiners (U+200C, U+200D) are kept on both sides, so they do not cause this.
 
 We do **not** write a test that says `CAFÉ` or `ＭＩＬＫ tea` is not found. That would be a test for a
 weakness, and it would break when we close the gap.
@@ -635,9 +647,13 @@ The CUJ test still passes after the change. We checked each step:
   `fi`. It only ever adds matches, never loses one, so we accept it.
 - **A notes-only match looks odd on the list**, because notes are in the details pane, not on the
   row. The hint is a TODO for the rebase, aligned with the details-pane plan.
-- **Removing format characters** also removes the invisible joiner (U+200D) inside some emoji, like
-  👩‍💻. A search for such an emoji then does not find it. This is rare in a to-do list; the gain
-  (a copied word with a hidden zero-width space still matches) is bigger.
+- **Removing format characters.** (Changed after the code review.) The two joiners, U+200C and
+  U+200D, are kept, so Persian words and emoji like 👩‍💻 are found. Every other format character is
+  still removed.
+- **A title with an invisible character inside is not found by pasting its own text** (a
+  zero-width space, a soft hyphen, a BOM, a bidi control). Titles are saved as typed (orchestrator
+  decision), and only the search is cleaned. Closing this needs cleaning on save, or a cleaned
+  copy of each title (a migration).
 - **Many spaces become one.** A title saved with two spaces, `buy  milk`, is not found by
   `buy  milk`, only by `buy` or `milk`. Rare, and the add form does not stop it today.
 - **Clashes when rebasing on 6, 21, 7 and 4.** All change `page_context` and the template. One key per
@@ -705,6 +721,42 @@ keys in `page_context`. The template: the search form, the empty message, the CS
 After the change: `make test` (unit 22, integration 82), `make test-cuj` (1) and `make check` all
 pass.
 
+### After the code review
+
+An adversarial code reviewer found no blockers. Fixed, tests first, as new commits:
+
+1. **The two joiners are kept.** `clean_search` removed every format character, also U+200C and
+   U+200D, so a pasted Persian title (`می‌خواهم`) and `👩‍💻` were not found. Now
+   `KEPT_FORMAT_CHARACTERS` keeps them (a small helper, `is_invisible(ch)`, says what is removed).
+   New: two unit rows in `test_list_params_keeps_the_search`, and `test_search_keeps_the_joiners`.
+2. **The gap for invisible characters in a saved title** is written in "Other differences that
+   remain" and in Risks (orchestrator decision: titles stay saved as typed).
+3. **"Clean, then cut" is pinned:** a new row in `test_list_params_cuts_a_long_search`, 10
+   zero-width spaces and 200 `a` → 200 `a`.
+4. **The no-match message uses the cleaned word:** `test_no_match_message_shows_the_cleaned_word`,
+   `q=" banana​ "` → exactly `<li>No to-dos match "banana".</li>`.
+5. **`maxlength` is 400** (`SEARCH_BOX_MAXLENGTH = 2 * SEARCH_MAX_LENGTH`): the browser counts
+   UTF-16 units. The context key is now `search_box_maxlength`. The exact-element tests changed.
+6. A one-line comment in `test_search.py`: on SQLite, `icontains` and `contains` cannot be told
+   apart by a test.
+7. **The page title names the search:** `Search: milk – To-do list` (escaped). New:
+   `test_page_title_names_the_search`.
+8. The docstring and `AGENTS.md` say "at most `SEARCH_MAX_LENGTH` (the title's max_length, 200)".
+
+Before the code (the tests committed first): 107 tests, 13 failures. The joiner rows and the joiner
+test failed (`{'q': 'میخواهم'} != {'q': 'می‌خواهم'}`; the titles were not found), every exact
+search box failed on `maxlength="400"`, and the page title test failed for `milk` and `<b>hi</b>`.
+The two pinning tests (3 and 4) passed, as expected, and were then shown failing against their
+deliberate bugs, which were then taken out:
+
+| Deliberate bug | Test | Result |
+|---|---|---|
+| cut first, then clean | `test_list_params_cuts_a_long_search` | failed: 190 `a` instead of 200 |
+| the page shows the raw `q`, not the cleaned one | `test_no_match_message_shows_the_cleaned_word` | failed: no `<li>No to-dos match "banana".</li>` |
+
+After the review fixes: `make test` (unit 22, integration 85), `make test-cuj` (1) and
+`make check` all pass.
+
 **Not done yet: the work after the rebase on 6, 21, 7 and 4.**
 
 - Keep every `page_context` key and every part of the page from 6, 21, 7 and 4.
@@ -713,7 +765,15 @@ pass.
 - The tests `test_wide_letters_find_words_in_the_notes`, `test_search_finds_words_only_in_the_notes`,
   `test_edit_link_keeps_the_search`, `test_edit_page_keeps_the_search` and
   `test_search_form_keeps_the_selected_todo`, each with its deliberate bug.
-- The details-pane TODO: the `matched in notes` hint (and its test), and what happens to a
-  selected to-do that the search hides. Follow `details-pane.md`, or ask the orchestrator.
-- Change the title element in `test_search.py` to the one 21 uses (a `title_element` helper in
-  `helpers.py`).
+- **The notes hint (decided by the orchestrator after the details-pane review):** exactly
+  `<small class="match-hint">matches in notes</small>`, shown only when `q` is set and the title
+  does not match. Work it out with `annotate(title_match=...)`, where `...` is the same OR of
+  `Q(title__icontains=word)` over `search_words(q)`, and only when `q` is set. Its test is
+  `test_notes_only_match_shows_a_hint` (the hint once on a notes-only match, `count=0` on a title
+  match).
+- What happens to a selected to-do that the search hides: follow `details-pane.md`, or ask the
+  orchestrator.
+- **Every title check goes through `parts.titles` or 21's `title_element(todo, query="")` helper**
+  (decided by the orchestrator), the positive checks **and** the `count=0` checks. After 21, a raw
+  `<span class="title">X</span>` is never on the page, so a `count=0` check on it would pass with
+  no meaning. Replace the `title(text)` helper in `test_search.py`.

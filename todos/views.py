@@ -70,23 +70,36 @@ FILTERS = [
 DEFAULT_FILTER = FILTERS[0]
 FILTER_BY_VALUE = {f.value: f for f in FILTERS}
 
-# The longest search: as long as the longest title, so any title can be pasted.
+# The longest search, in characters (code points): the title's max_length,
+# 200, so any title can be pasted whole. The server cuts the search to this.
 SEARCH_MAX_LENGTH = Todo._meta.get_field("title").max_length
+# The browser counts a box's maxlength in UTF-16 units, and one character (an
+# emoji) can take two. So the box allows twice as many; the server still cuts.
+SEARCH_BOX_MAXLENGTH = 2 * SEARCH_MAX_LENGTH
+
+# The zero-width non-joiner and joiner are format characters too, but Persian,
+# Hindi and emoji need them inside a word, so they are kept.
+KEPT_FORMAT_CHARACTERS = {"‌", "‍"}
+
+
+def is_invisible(ch):
+    """True for a control or format character that a search must not keep."""
+    if ch.isspace() or ch in KEPT_FORMAT_CHARACTERS:
+        return False
+    return unicodedata.category(ch) in ("Cc", "Cf")
 
 
 def clean_search(text):
-    """The search word: no invisible characters, one space between words, at most 200 characters.
+    """The search word: no invisible characters, one space between words.
 
+    At most SEARCH_MAX_LENGTH characters (the title's max_length, 200).
     Invisible characters are control characters (like the "null" character)
-    and format characters (like a zero-width space). White space is kept for
-    the next step, which turns every kind of it (also the wide Japanese space)
-    into one normal space.
+    and format characters (like a zero-width space), but not the two joiners.
+    White space is kept for the next step, which turns every kind of it (also
+    the wide Japanese space) into one normal space. The cut comes last, so
+    removed characters do not count.
     """
-    text = "".join(
-        ch
-        for ch in text
-        if ch.isspace() or unicodedata.category(ch) not in ("Cc", "Cf")
-    )
+    text = "".join(ch for ch in text if not is_invisible(ch))
     text = " ".join(text.split())
     return text[:SEARCH_MAX_LENGTH].rstrip()
 
@@ -227,7 +240,7 @@ def page_context(request, form):
         "close_url": reverse("todo_list") + list_query(without_selected(params)),
         "q": params.get("q", ""),
         "no_match_start": chosen_filter(params).no_match_start,
-        "search_max_length": SEARCH_MAX_LENGTH,
+        "search_box_maxlength": SEARCH_BOX_MAXLENGTH,
         "search_keeps": list(without_q.items()),
         "clear_search_url": reverse("todo_list") + list_query(without_q),
     }
