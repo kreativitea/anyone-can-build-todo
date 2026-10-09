@@ -637,7 +637,7 @@ The orchestrator answered these; the owner confirms:
 
 The builder followed the plan. These are the places where it did something different, and why.
 
-1. **The starting point.** Priority (6) was **not** on `main` yet when the branch started (the
+1. **The starting point.** (Fixed by the rebase, item 10.) Priority (6) was **not** on `main` yet when the branch started (the
    newest commit was "Ruff: leave Markdown files alone (#6)"). So this branch has **no Priority
    row** in the pane. The template has a comment where it goes. `pane_element(...)` has
    `priority=None`, which means "no Priority row". See "After the rebase" below.
@@ -701,13 +701,42 @@ The builder followed the plan. These are the places where it did something diffe
      (the hint was there); the empty table already had no hint. `todos` is already loaded by the
      list loop above it, so there is no extra query (the query test still passes).
 
-### After the rebase on priority (6) and edit (4)
+10. **The rebase on `main` with priority (6) and the test-client journeys.**
+    - Clashes, combined by hand: `helpers.py` keeps main's `page_forms`/`PageForms`, and
+      `PageParts` takes `post_actions` from `PageForms` (as on main) plus this feature's `titles`
+      (with the link), `selected_titles`, `panes` and `row()`. The template keeps priority's
+      select box, its CSS, and its label inside the title span, after the title link. `AGENTS.md`
+      keeps both features' words in each row.
+    - Main's own tests wrote the title span by hand (`test_priority.py`'s `title_with_label`, and
+      `todo_row` in `cuj/test_journeys.py`). They now use `title_element(todo)` (the rule from this
+      plan), and `todo_row` has the row's `id="todo-<pk>"`. The "space before the label" check is
+      now `Call home</a> <span class="priority high">…`.
+    - **The Priority row** is in the pane, after Due, and shows Medium too. `pane_element` has
+      `priority="Medium"` by default; `Buy milk` is High in `test_details.py`, and `Call home`'s
+      pane shows Medium (`test_pane_shows_completed_medium_and_no_due_date`). `title_element` adds
+      the High/Low label from the to-do's own priority.
+    - Before the Priority row: 5 pane tests and the details journey failed, because the pane had no
+      `<dt>Priority</dt>`. Deliberate bugs, each seen failing and put back: no Priority row; the
+      number (`selected.priority`) instead of the word; Medium hidden in the pane (like on the
+      row: only the Call home test fails, so that test is the one that guards it); no label in the
+      row's title (`title_element` checks in `test_details.py`, `test_priority.py` and the High
+      journey fail).
+    - Checked by eye at 1280 pixels with headless **Google Chrome** (`--screenshot`; Playwright is
+      gone): Buy milk selected; the row has its red "High priority" label and is marked; the pane
+      shows Status Active, Due 5 Oct 2026, Priority High, Created.
+11. **Owner decision: phones get a light grey underline.** On a device without hover there is no
+    way to see that a title is a link, so `@media (hover: none)` gives the title links a light grey
+    (`#bbb`) underline, 2 pixels below the text. With hover, it stays hover-only. Checked by eye
+    with headless Google Chrome told to act like a phone
+    (`--blink-settings=primaryHoverType=1,availableHoverTypes=1,…`): every title has the grey
+    underline, the selected one is bold, and the done title (Call home) is still crossed out. The
+    same page without that setting has no underline. (Headless Chrome draws the page at least about
+    500 pixels wide, so the "375" picture was a cut of a 500-pixel page; the 500-pixel picture shows
+    the one-column phone layout in full.)
 
-- **Priority (6):** add `<dt>Priority</dt><dd>{{ selected.get_priority_display }}</dd>` after Due
-  (where the comment is); give `pane_element` the default `priority="Medium"`; set `Buy milk` to
-  High in the tests (`priority="High"` in its pane), and check that `Call home`'s pane shows Medium.
-  `title_element` gains the priority label from 6.
-- **Edit (4):** add the pane's Edit link in `details-actions`, before Close, and edit's
+### Still to do after edit (4)
+
+- Add the pane's Edit link in `details-actions`, before Close, and edit's
   `test_pane_has_an_edit_link` (see "For later features"). Move this feature's CSS into the list
   page's `{% block style %}`.
 
