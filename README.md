@@ -39,13 +39,20 @@ uv sync
 uv run python manage.py migrate
 ```
 
-**5. Turn on the commit checks.** From now on, every `git commit` checks your code first.
+**5. Download the test browser.** One test uses a real browser, Chromium, to use the site like a
+person. This downloads it (about 100 MB), outside this folder.
+
+```bash
+uv run playwright install chromium
+```
+
+**6. Turn on the commit checks.** From now on, every `git commit` checks your code first.
 
 ```bash
 uv run pre-commit install
 ```
 
-**6. Start the server.**
+**7. Start the server.**
 
 ```bash
 uv run python manage.py runserver
@@ -53,16 +60,19 @@ uv run python manage.py runserver
 
 Open <http://127.0.0.1:8000/>. Press `Ctrl+C` in the terminal to stop the server.
 
-**7. Run the tests.**
+**8. Run the tests.**
 
 ```bash
 uv run python manage.py test
 ```
 
-You should see `Ran 5 tests` and `OK`.
+You should see `OK`, then one line for each level of tests, like `Unit: 3 passed`. There are three
+levels: **unit** tests check one piece alone, **integration** tests send requests to the site, and
+**CUJ** (critical user journey) tests use the site in a real browser.
 
-On a Mac, `make` does the same in fewer words: `make setup` is steps 3 to 5, `make run` is step 6,
-`make test` is step 7. `make help` lists the rest.
+On a Mac, `make` does the same in fewer words: `make setup` is steps 3 to 6, `make run` is step 7.
+`make test` runs the fast tests, `make test-cuj` runs the browser test, and `make check` runs
+everything. `make help` lists the rest.
 
 ## Checks
 
@@ -86,7 +96,8 @@ runs the same checks and the tests on every push.
 | `todos/urls.py` | The addresses of the to-do pages |
 | `todos/views.py` | What happens when each address is visited |
 | `todos/templates/todos/todo_list.html` | The page you see |
-| `todos/tests.py` | The tests |
+| `todos/tests/` | The tests, in three folders: `unit`, `integration` and `cuj` |
+| `config/test_runner.py` | Runs the tests, then prints a summary for each level |
 | `AGENTS.md` | Instructions for the AI assistant (Codex reads it; `CLAUDE.md` points Claude to it) |
 
 ## Put it on the internet

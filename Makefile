@@ -1,11 +1,12 @@
 # To-do list: short commands for this project. Type `make help` to see them.
 
-.PHONY: help setup run test lint format check reset worktree
+.PHONY: help setup run test test-cuj lint format check reset worktree
 
 help:
 	@echo "make setup            install Python and the packages, create the database, turn on the commit checks"
 	@echo "make run              start the server, then open http://127.0.0.1:8000"
-	@echo "make test             run the tests in todos/tests.py"
+	@echo "make test             run the unit and integration tests (fast)"
+	@echo "make test-cuj         run the CUJ test in a real browser (slow)"
 	@echo "make lint             look for mistakes and style problems (ruff check)"
 	@echo "make format           rewrite the code in the standard style (ruff format)"
 	@echo "make check            everything the commit checks run, on every file, plus the tests"
@@ -16,13 +17,17 @@ help:
 setup:
 	uv sync
 	uv run python manage.py migrate
+	uv run playwright install chromium
 	uv run pre-commit install
 
 run:
 	uv run python manage.py runserver
 
 test:
-	uv run python manage.py test
+	uv run python manage.py test --parallel auto todos.tests.unit todos.tests.integration
+
+test-cuj:
+	uv run python manage.py test todos.tests.cuj
 
 lint:
 	uv run ruff check
@@ -32,7 +37,7 @@ format:
 
 check:
 	uv run pre-commit run --all-files
-	uv run python manage.py test
+	uv run python manage.py test --parallel auto
 
 reset:
 	rm -f db.sqlite3
