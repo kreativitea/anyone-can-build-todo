@@ -66,6 +66,20 @@ class TodoForm(forms.ModelForm):
             "notes": forms.Textarea(attrs={"rows": 3, "aria-label": "Notes"}),
         }
 
+    def save(self, commit=True):
+        """Save, and remember the due date's day for a monthly repeat.
+
+        Only when the to-do is new, or its due date or repeat changed: fixing
+        a typo in a copy due 28 Feb must not move "the 31st" to the 28th.
+        """
+        # self.errors runs the checks first: they put the new values in
+        # self.instance. With errors, super().save() refuses, as always.
+        changed = {"due_date", "repeat"} & set(self.changed_data)
+        if not self.errors and (self.instance._state.adding or changed):
+            due = self.instance.due_date
+            self.instance.repeat_day = due.day if due else None
+        return super().save(commit)
+
     def notes_box_open(self):
         """Open the folded notes box when there are notes to see, or an error about them."""
         if self["notes"].errors:

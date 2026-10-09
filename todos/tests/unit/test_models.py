@@ -159,3 +159,11 @@ class RepeatModelTests(TestCase):
     def test_next_copy_without_a_remembered_day_uses_the_due_dates_day(self):
         todo = Todo(title="Pay rent", repeat="monthly", due_date=date(2027, 2, 28))
         self.assertEqual(todo.next_copy().due_date, date(2027, 3, 28))
+
+    def test_a_copy_remembers_the_day_it_was_counted_from(self):
+        # An old row (no remembered day) due 31 Jan: its copy is due 28 Feb
+        # but remembers the 31st, so the one after it is 31 Mar, not 28 Mar.
+        todo = Todo(title="Pay rent", repeat="monthly", due_date=date(2027, 1, 31))
+        copy = todo.next_copy()
+        self.assertEqual((copy.due_date, copy.repeat_day), (date(2027, 2, 28), 31))
+        self.assertEqual(copy.next_copy().due_date, date(2027, 3, 31))

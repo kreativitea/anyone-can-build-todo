@@ -5,13 +5,18 @@ Status: **done.** Built on `feature/repeating`, tests first. See "What happened"
 ## The owner's answers
 
 1. **Undo keeps an edited copy.** Yes (as planned).
-2. **Monthly: the last day stays the last day.** Yes (as planned).
+2. **Monthly: remember the day** (changed after the review). The to-do remembers the day of the
+   month the person chose (`repeat_day`). The old rule "the last day stays the last day" is gone.
 3. **No catching up.** Yes. But the person must be able to **change the new copy's due date** on its
    edit page, like any field. It is: `due_date` is a normal field of `TodoForm`. A test checks it
    (`test_edit_the_copys_due_date`).
 4. **Subtasks are copied** to the next copy, all set to **not done**. Feature 15 merges after this
    one, so 15 adds the copying (see "Subtasks (feature 15)").
 5. **The admin's "done" makes no copy.** Yes (as planned).
+
+After an adversarial review of the built branch, the orchestrator also decided: Undo decides with
+the copy's own state (an `edited` flag), never by building the copy again from the original. See
+"Undo deletes the copy only when it is safe" and "Review fixes" in "What happened".
 
 There is **no production data** yet (CONVENTIONS): nobody uses the live site. So nothing special
 is done for old rows; the migration Django makes is enough.
@@ -118,17 +123,21 @@ one model method, `Todo.set_done(target)`. The view only calls it.
 ### The next due date: counted from the **due date**, not from today
 
 - **Daily:** one day after the due date. **Weekly:** seven days after.
-- **Monthly:** the same day number, one month later, with two rules:
-  - **The last day stays the last day.** If the due date is the last day of its month, the next
-    one is the last day of the next month. 31 Jan → 28 Feb → 31 Mar → 30 Apr → 31 May. So "the end
-    of every month" works, with no new field.
-  - **Too short a month:** otherwise, if the next month does not have that day, use its last day.
-    (This only happens for 29, 30, 31 in front of a short month, and those are already covered by
-    the first rule, except 29 and 30 Jan → 28 Feb.)
-- **What still moves (accepted):** a day that **happens** to be the last day is treated as "end of
-  month". 30 Jan 2027 → 28 Feb 2027 → **31 Mar**. 30 Apr → **31 May**. 28 Feb 2027 (a 28th in a
-  year that is not a leap year) → **31 Mar**. The person can fix the date once with Edit. Fixing it
-  for good needs an "anchor day" field, which Edit must also keep right; we do not do that now.
+- **Monthly: the to-do remembers its day** (owner decision, after the review). A new field,
+  `repeat_day` (a small number, empty allowed, `editable=False`), keeps the day of the month the
+  person chose. The next date is that day in the next month, or the **last day** of the next month
+  when it is shorter: `min(repeat_day, days in the next month)`.
+  - 31 Jan → 28 Feb (29 in a leap year) → **31 Mar** → 30 Apr → 31 May.
+  - 30 Jan → 28 Feb → **30 Mar**. 28 Jan → 28 Feb → **28 Mar** (leap year or not).
+  - So a chain of 12 steps from the 31st, the 30th or the 28th **never drifts**.
+- **Who sets `repeat_day`:** the add form and the edit page (`TodoForm.save`), when the to-do is
+  new or its due date or repeat changed: `repeat_day = due_date.day` (empty without a date). So
+  editing a copy's due date (the owner wants that) moves the day; fixing a typo does not. The
+  admin never sets it.
+- **Copies keep it:** `next_values()` copies `repeat_day`. A to-do without one (an old row, the
+  shell) uses its due date's own day, and its copy remembers that day, so it drifts at most once.
+- **Year 9999:** a next date after 31 Dec 9999 (the last date Python has) raises `OverflowError`.
+  Done still marks the to-do completed, with no copy.
 - Why from the due date: a to-do due Monday that is done on Tuesday should still come back on
   Monday. Counting from today would slowly move the day.
 - The date math is a **pure function** — a function that only takes values and gives back a value,
@@ -159,11 +168,19 @@ are true**:
 
 1. the copy is still **open** (not completed);
 2. the copy has **no next copy of its own** (`next_todo` is empty);
-3. the copy is **untouched**: its copied fields (`title`, `notes`, `priority`, `repeat`,
-   `due_date`) still equal what `next_copy()` of the reopened to-do gives now;
-4. (added by feature 15) the copy's **subtasks are untouched**: exactly the ones Done copied — the
-   same titles, in the same order, all not done. A copy whose subtasks the person ticked, renamed,
-   added or deleted is kept.
+3. **nobody edited** the copy: a new field `edited` (true/false, `editable=False`) is set to true
+   when a person saves the to-do on the edit page or in the admin.
+
+The three rules are one conditional delete:
+`Todo.objects.filter(pk=<the copy>, done=False, next_todo=None, edited=False).delete()`.
+
+**Changed after the review.** The first version compared the copy with what `next_copy()` of the
+original gives *now*. That broke in two ways: after the original's repeat was set to "Does not
+repeat", Undo built a copy with repeat `none` and crashed (500, every time); and after a typo fix in
+the **original**, the untouched copy no longer matched and was kept as a stale duplicate. The
+`edited` flag looks only at the copy.
+
+**Feature 15 (subtasks):** changing a copy's subtasks must also set the copy's `edited`.
 
 Otherwise the copy **and the link are kept**. Because the link is kept, pressing Done on the
 reopened to-do again makes **no** new copy.
@@ -172,6 +189,9 @@ reopened to-do again makes **no** new copy.
 |---|---|
 | Done by mistake, Undo at once | copy deleted; the list is as before Done |
 | The person **edited** the copy, then Undo on the old one | copy kept (their edit is not lost); two open to-dos, which the person can see |
+| The person edited the **original** (a typo, or "Does not repeat"), then Undo | the untouched copy is deleted; no crash |
+| The copy was completed in the admin | copy kept |
+| The copy is open but has its own copy | copy kept, with its link |
 | Chain: Done Monday, Done Tuesday (its copy), then Undo Monday | Tuesday is completed → kept; Wednesday stays; Monday is open again |
 | The copy was deleted by hand | nothing to delete; Monday is open; Done again makes a fresh copy |
 
@@ -197,10 +217,8 @@ subtasks **are copied**. Feature 15 adds, in `models.py`:
 - In `set_done`, right after `copy.save()`: one `bulk_create` (one query for all of them) of new
   subtasks on the copy, one for each subtask of the original, in the same order, with the same
   title and `done=False`.
-- A method `has_untouched_subtasks_of(original)`: true when the copy's subtasks, as a list of
-  `(title, done)` in order, equal `[(title, False)` for each subtask of the original`]`. It is added
-  to the Undo rule (rule 4 above). So a copy with exactly the copied, untouched subtasks still counts
-  as untouched and is deleted by Undo; a copy whose subtasks the person changed is kept.
+- (Changed after the review.) No `has_untouched_subtasks_of`: a change to a copy's subtasks sets
+  the copy's `edited` to true, and Undo keeps an edited copy.
 - Tests in 15: Done copies the subtasks, all not done; Undo deletes a copy with untouched subtasks
   (and its subtasks); Undo keeps a copy after one of its subtasks was ticked; the field-copy test
   still passes (subtasks are another table, not a field).
@@ -221,7 +239,6 @@ subtasks **are copied**. Feature 15 adds, in `models.py`:
   A later option: **step forward** with `next_due_date` again and again until the date is today or
   later (so a weekly Monday to-do stays on Mondays). Not `max(next, today)`, because that would
   move a weekly Monday to-do to another weekday.
-- **No anchor day** for monthly (see the date rules).
 - Marking a to-do done **in the admin** makes no next copy. Only the Done button does.
 - Changing `repeat` on an already completed to-do (with Edit) makes no copy. Only Done does.
 - Editing a copy (its due date, title, anything) never makes or deletes a to-do. Only Done and Undo
@@ -250,6 +267,12 @@ What stays the same: Done and Undo accept `POST` only, they go back to the same 
 (repeat is `none`).
 
 ## The changes, one file at a time
+
+The code blocks below are the **first** version. The review changed `repeat.py` (the remembered
+day, year 9999), `set_done` (the `edited` flag, one conditional delete, no copy after 9999),
+`TodoForm.save` (sets `repeat_day`), the edit view and the admin (set `edited`), and the add
+form (Add on its own row). The real code is on the branch; "Review fixes" in "What happened"
+lists every change.
 
 ### 1. `todos/repeat.py` — new file, the date math
 
@@ -520,11 +543,15 @@ Two test words:
 | `test_daily` | 12 Oct 2026 → 13 Oct; 31 Oct → 1 Nov; **31 Dec 2026 → 1 Jan 2027**; 28 Feb 2027 → 1 Mar 2027; **28 Feb 2028 → 29 Feb 2028** (leap); 29 Feb 2028 → 1 Mar 2028 |
 | `test_weekly` | 12 Oct 2026 → 19 Oct; **28 Dec 2026 → 4 Jan 2027**; 25 Feb 2027 → 4 Mar 2027; 26 Feb 2028 → 4 Mar 2028 (leap) |
 | `test_monthly_same_day` | 12 Oct 2026 → 12 Nov; **15 Dec 2026 → 15 Jan 2027**; 28 Jan 2027 → 28 Feb 2027; 28 Feb 2028 → 28 Mar 2028 (in a leap year, 28 Feb is not the last day) |
-| `test_monthly_last_day_stays_last_day` | **31 Jan 2027 → 28 Feb 2027**; **31 Jan 2028 → 29 Feb 2028**; **28 Feb 2027 → 31 Mar 2027**; **29 Feb 2028 → 31 Mar 2028**; 31 Mar → 30 Apr; 30 Apr → 31 May; 30 Jun → 31 Jul; 31 Aug → 30 Sep; 30 Sep → 31 Oct; 30 Nov → 31 Dec; **31 Dec 2026 → 31 Jan 2027** |
-| `test_monthly_short_month` | 29 Jan 2027 → 28 Feb 2027; 30 Jan 2027 → 28 Feb 2027; 30 Jan 2028 → 29 Feb 2028 |
-| `test_monthly_29_and_30_move_to_month_end_after_february` | 30 Jan 2027 → 28 Feb → **31 Mar**; 29 Mar → 29 Apr (not the last day: stays) ; 30 Mar → 30 Apr → **31 May** (documents the accepted drift) |
-| `test_monthly_twelve_steps_from_the_31st` | start 31 Jan 2027, call 12 times: 28 Feb, 31 Mar, 30 Apr, 31 May, 30 Jun, 31 Jul, 31 Aug, 30 Sep, 31 Oct, 30 Nov, 31 Dec 2027, 31 Jan 2028 |
+| `test_monthly_remembers_the_day` | (from, remembered day → to): 31 Jan 2027, 31 → 28 Feb; 28 Feb 2027, 31 → **31 Mar**; 31 Mar, 31 → 30 Apr; 30 Apr, 31 → **31 May**; 31 Jan 2028, 31 → 29 Feb 2028; 29 Feb 2028, 31 → 31 Mar; 31 Dec 2026, 31 → 31 Jan 2027; 28 Feb 2027, 30 → **30 Mar**; 28 Feb 2027, 29 → 29 Mar; 28 Feb 2027, 28 → **28 Mar**; 28 Feb 2028, 28 → 28 Mar |
+| `test_monthly_short_month` | 29, 30 and 31 Jan 2027 → 28 Feb 2027; 30 Jan 2028 → 29 Feb 2028 |
+| `test_monthly_without_a_day_uses_the_due_dates_day` | no remembered day: 28 Feb 2027 → **28 Mar**; 30 Apr → **30 May**; 29 Feb 2028 → 29 Mar |
+| `test_daily_and_weekly_ignore_the_day` | daily and weekly with day 31: +1 and +7 days |
+| `test_monthly_twelve_steps_from_the_31st` | start 31 Jan 2027 (day 31), call 12 times: 28 Feb, 31 Mar, 30 Apr, 31 May, 30 Jun, 31 Jul, 31 Aug, 30 Sep, 31 Oct, 30 Nov, 31 Dec 2027, 31 Jan 2028 |
+| `test_monthly_twelve_steps_from_the_30th_never_drift` | start 30 Jan 2027 (day 30): 28 Feb, then the 30th of every month, ending 30 Jan 2028 |
+| `test_monthly_twelve_steps_from_the_28th_never_drift` | start 28 Jan 2027 and 28 Jan 2028 (no day needed): always the 28th |
 | `test_monthly_twelve_steps_from_the_15th` | start 15 Dec 2026, 12 times: always the 15th, ending 15 Dec 2027 |
+| `test_year_9999_is_too_far` | daily from 31 Dec 9999, weekly from 28 Dec 9999, monthly from 15 Dec 9999: `OverflowError` |
 | `test_none_is_a_mistake` | `none` raises `ValueError` |
 | `test_unknown_word_is_a_mistake` | `yearly` raises `ValueError` |
 
@@ -667,9 +694,13 @@ How it fails today: Playwright cannot find the Repeats box.
   `done=` after the rebase.
 - **An edited copy is kept on Undo**, so two open to-dos can exist. This is on purpose: nothing the
   person typed is deleted. The person sees both and can delete one.
-- **Monthly drift for 28 (not leap year), 29 and 30.** Such a day that is the last day of its month
-  becomes "end of month": 30 Jan → 28 Feb → 31 Mar; 30 Apr → 31 May. The person fixes it once with
-  Edit. A real fix needs an anchor-day field.
+- **Two rows can have the same title**, and then the same "Edit <title>" name (the Edit link's
+  `aria-label`). A repeating to-do makes this common: the completed one and its copy. A screen
+  reader user hears two links with the same name; a test helper that finds a link by its name
+  (`link_href`) fails on purpose when there are two. Adding the due date to the name is a later
+  change.
+- **`edited` is set by every Save** on the edit page or in the admin, also a Save with no change.
+  Then Undo keeps that copy. This is the safe side: it never deletes anything a person touched.
 - **No catching up.** A daily to-do that is a week late comes back still late, once per Done. The
   person fixes it by editing the copy's due date (tested). The later option is the step-forward
   loop (see "What we will not do").
@@ -686,6 +717,10 @@ How it fails today: Playwright cannot find the Repeats box.
 - **The admin** can tick "done" without making a next copy. Accepted: the admin is for fixing data.
 - **Migration clash** with 9 (sort) and 15 (subtasks): handled by the merge queue (make the
   migration again after the rebase).
+- **The done-claim cannot be tested on SQLite.** SQLite lets one writer in at a time, so two
+  requests never run `set_done` at the same moment (the reviewer's 90 threaded rounds passed).
+  The claim (`UPDATE ... WHERE done = not target`) guards databases that let two writers in, like
+  PostgreSQL. The test with two stale objects shows only the "already done" case.
 - **SQLite and two writers.** Python's `sqlite3` module, by default, waits up to 5 seconds for the
   other writer to finish; after that, the request fails with "database is locked". With one shared
   list and few users, that is fine.
@@ -770,7 +805,59 @@ next to Add. The phone width was not checked in this run.
   `test_edit_form_does_not_change_the_add_form` lists `repeat` too.
 - **Step 7 (`make run` by hand)** was replaced by the screenshots and the migration check above.
 
-**For feature 15 (subtasks):** add the subtask copying after `copy.save()` in `set_done`, add
-`has_untouched_subtasks_of` where the comment in `set_done` says, and update
+**For feature 15 (subtasks):** add the subtask copying after `copy.save()` in `set_done`; a
+change to a copy's subtasks must set the copy's `edited` (see the comment in `set_done`); update
 `test_delete_completed_does_not_load_each_todo` for the subtask queries. A toggle test in 15 must
 post `done=1` or `done=0`.
+
+### Review fixes
+
+An adversarial review of the built branch found these. Each fix has tests, written first and shown
+failing (`make test` before the fix: 292 tests, 8 failures and 29 errors, all for the reasons
+below; the CUJs still passed). After the fix: `make test` 293 passed (unit 97, integration 196),
+`make test-cuj` 4 passed, `make check` passed.
+
+1. **Undo after the original stopped repeating was a 500, every time.** Done, then the completed
+   original set to "Does not repeat" (edit page or admin), then Undo: the old untouched-check
+   built the copy again with repeat `none`, and `next_due_date` raised `ValueError`. Tests failed
+   with `ValueError: Not a repeat: 'none'`.
+2. **A typo fix in the original left a stale duplicate.** The untouched copy no longer matched the
+   original's new title, so Undo kept it (`[Bins!, Bins] != [Bins]`).
+   **Fix for 1 and 2:** a new field `edited` (`editable=False`). The edit view and the admin's
+   `save_model` set it. Undo deletes the copy in one conditional delete:
+   `filter(pk=copy, done=False, next_todo=None, edited=False).delete()`. `is_untouched_copy_of`
+   is gone.
+3. **Each Undo guard alone has a test now**, each shown failing when only its guard is removed:
+   "open" → `test_undo_keeps_a_completed_copy` (the copy completed by a plain update, so nothing
+   else protects it); "no copy of its own" → `test_undo_keeps_an_open_copy_that_has_its_own_copy`
+   (`2 != 3`); "not edited" → `test_undo_keeps_an_edited_copy`.
+   `test_undo_keeps_a_copy_completed_in_the_admin` is protected by two guards (the admin sets
+   `edited` too); it fails when both are removed.
+4. **The done-claim** stays, with a comment: it guards real concurrency on a database that lets two
+   writers in at once. SQLite lets one writer in at a time, so **no SQLite test can isolate it**
+   (the reviewer's 90 threaded rounds all passed). The two-stale-objects test covers the "already
+   done" case only.
+5. **Monthly drift** (owner decision: remember the day). New field `repeat_day`; the form sets it
+   when the to-do is new or its date or repeat changed; copies keep it; monthly uses
+   `min(repeat_day, days in the next month)`. The 28th chain failed on the old code
+   (`... 3, 31 ... != ... 3, 28 ...`); the 30th chain through the add form and Done failed the same
+   way. Not in the owner's text, and added by me: a to-do without `repeat_day` (an old row, the
+   shell) gives its copy the day it was counted from, so it drifts at most once (a test shows it).
+6. **Year 9999.** `next_due_date` raises `OverflowError` after 31 Dec 9999 (monthly raised
+   `ValueError: year 10000` before); `set_done` catches it and makes no copy. Done still works.
+7. Covered by 1.
+8. **The Add button** is on its own row (`<div class="add-actions">`), so it does not look like a
+   part of the Repeats box. Checked by eye at 1280 with headless Chrome.
+
+**Deliberate bugs after the fixes:** 22 checks, all caught: the remembered day, the short-month
+rule, the December branch, the 9999 check and its catch, the old `set_done`, the flipping view,
+each Undo guard, `edited` not set by the edit page or the admin, the form setting the day on every
+save or never, `next_values` dropping `repeat_day` or `priority`, Done copying every to-do, no
+due-date check, the repeat on completed rows, the Repeats row for every to-do, the Add button
+back in the Repeats row.
+
+**Migration, again.** `0005` was deleted and made again by Django:
+`0005_todo_edited_todo_next_todo_todo_repeat_and_more.py` (four fields). On a database with three
+to-dos at `0004`: after `migrate` they have `repeat = none`, empty `repeat_day` and `next_todo`,
+and `edited = false`. An old row due 31 Oct, made monthly in the shell: Done gives 30 Nov (day
+31 remembered), and Done on that gives **31 Dec**.

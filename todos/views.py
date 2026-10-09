@@ -341,6 +341,7 @@ def todo_edit(request, pk):
         form = TodoEditForm(request.POST, instance=todo)
         if form.is_valid():
             edited = form.save(commit=False)
+            edited.edited = True  # Undo never deletes a to-do a person edited
             try:
                 # Only change a row that is there. A plain save() would make
                 # the to-do again if someone deleted it a moment ago. The

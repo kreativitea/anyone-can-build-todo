@@ -63,6 +63,17 @@ class Todo(models.Model):
         on_delete=models.SET_NULL,
         related_name="+",
     )
+    # The day of the month a monthly to-do comes back on. A form that sets or
+    # changes the due date or the repeat sets it; copies keep it. None: use
+    # the due date's own day.
+    repeat_day = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+        editable=False,
+    )
+    # True once a person saved this to-do on the edit page or in the admin.
+    # Undo never deletes an edited copy.
+    edited = models.BooleanField(default=False, editable=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
     objects = TodoQuerySet.as_manager()
@@ -86,38 +97,38 @@ class Todo(models.Model):
     def next_values(self):
         """The fields of the next copy: what is copied, and the next due date.
 
-        Used to MAKE the copy and to check that a copy is untouched, so the
-        two can never disagree.
+        Raises OverflowError when the next date would be after 31 Dec 9999.
         """
         start = self.due_date or timezone.localdate()
+        # Without a remembered day (an old row, the shell), the copy remembers
+        # the day it was counted from, so it does not drift after that.
+        day = self.repeat_day or start.day
         return {
             "title": self.title,
             "notes": self.notes,
             "priority": self.priority,
             "repeat": self.repeat,
-            "due_date": rp.next_due_date(start, self.repeat),
+            "repeat_day": day,
+            "due_date": rp.next_due_date(start, self.repeat, day),
         }
 
     def next_copy(self):
         """The next to-do of a repeating one, not saved yet."""
         return Todo(**self.next_values())
 
-    def is_untouched_copy_of(self, original):
-        """True if this to-do is still exactly what Done made from `original`."""
-        return all(
-            getattr(self, name) == value
-            for name, value in original.next_values().items()
-        )
-
     def set_done(self, target):
         """Done (target=True) or Undo (target=False). Does nothing if it is already so.
 
-        Done on a repeating to-do makes the next copy. Undo deletes that copy
-        only if it is open, has no next copy of its own, and was not changed.
-        Safe when two requests come at once: the UPDATE claims the change, and
-        only the request that changed the row goes on.
+        Done on a repeating to-do makes the next copy (none after the year
+        9999). Undo deletes that copy only if it is open, has no next copy of
+        its own, and nobody edited it.
         """
         with transaction.atomic():
+            # Claim the change: only the request whose UPDATE changed the row
+            # goes on. This guards real concurrency on a database that lets
+            # two writers in at once (PostgreSQL). SQLite lets one writer in
+            # at a time, so no SQLite test can show that race; the test with
+            # two stale objects shows the "already done" case.
             claimed = Todo.objects.filter(pk=self.pk, done=not target).update(
                 done=target
             )
@@ -126,15 +137,20 @@ class Todo(models.Model):
             fresh = Todo.objects.get(pk=self.pk)
             if target:
                 if fresh.repeats and fresh.next_todo_id is None:
-                    copy = fresh.next_copy()
+                    try:
+                        copy = fresh.next_copy()
+                    except OverflowError:
+                        return  # no date after 31 Dec 9999: Done, with no copy
                     copy.save()
                     Todo.objects.filter(pk=fresh.pk).update(next_todo=copy)
             elif fresh.next_todo_id is not None:
-                copy = fresh.next_todo
-                if (
-                    not copy.done
-                    and copy.next_todo_id is None
-                    and copy.is_untouched_copy_of(fresh)
-                    # Feature 15 adds: and copy.has_untouched_subtasks_of(fresh)
-                ):
-                    copy.delete()  # SET_NULL empties fresh.next_todo
+                # The copy's own state decides, in one conditional DELETE.
+                # Never build the copy again from the original: the original
+                # may have changed since Done (even its repeat).
+                # Feature 15: changing a copy's subtasks must also count as edited.
+                Todo.objects.filter(
+                    pk=fresh.next_todo_id,
+                    done=False,
+                    next_todo=None,
+                    edited=False,
+                ).delete()  # SET_NULL empties fresh.next_todo
