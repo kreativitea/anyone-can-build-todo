@@ -278,12 +278,15 @@ Differences from the plan:
 
 - **One helper for the page's data.** The orchestrator asked for this after the plan was approved.
   `views.py` has a small function, `page_context(request, form)`, that returns what the page needs,
-  one key per line. It takes `request` but does not use it yet: the filter feature needs it next. Both `todo_list` and the error path of `todo_add` use it. About 15 later features add a
-  key to the page, so each one now adds **one line in one place**, not two, and two branches are
-  less likely to change the same line. The behaviour does not change, so no test was added.
-- **`test_no_due_date_shows_no_due_text` looks for `>due `, not `due `.** The page's CSS has the
-  rule `li .due { ... }`, which contains `due ` too, so the test would fail for the wrong reason.
-  `>due ` is the start of the date text right after its `<span>` tag, which is what the test means.
+  one key per line. It takes `request` but does not use it yet: the filter feature needs it next.
+  Both `todo_list` and the error path of `todo_add` use it. About 15 later features add a key to
+  the page, so each one now adds **one line in one place**, not two, and two branches are less
+  likely to change the same line. The behaviour does not change, so no test was added. AGENTS.md
+  says every key the list page needs goes in `page_context`.
+- **`test_no_due_date_shows_no_due_text` looks for the element, `class="due"`, not the text
+  `due `.** The page's CSS has the rule `li .due { ... }`, which contains `due ` too, so the plan's
+  check would fail for the wrong reason. (A first try, `>due `, depended on spaces in the template,
+  and the code review showed a bug that it missed.)
 - **The error list had a line under it.** Django draws errors as a `<ul class="errorlist">` with
   `<li>` items, so the page's own `li` rule (padding and a bottom border) hit them. A rule
   `.errorlist li { padding: 0; border: 0; }` stops that.
@@ -296,3 +299,30 @@ Differences from the plan:
 - A small grey style for the date in the list (`li .due`) was added, so it reads as extra detail.
 - The visual check (step 5) used a screenshot of the page at 375 px and 800 px, with a bad date,
   instead of `make run` by hand.
+
+### After the code review
+
+An adversarial code reviewer checked the branch. Its findings were fixed in new commits, without
+changing the earlier ones:
+
+- **Phone layout.** At 320 px, a long title was squeezed to one word per line, and the date broke
+  over two lines. The date is now a `<small class="due">` **inside** the title, on its own line
+  (`display: block`), and the title may break inside a very long word (`overflow-wrap: anywhere`).
+  Checked with a 320 px screenshot. Note for later features: the title's text now ends with the
+  date, so a test that matches the title text *exactly* must allow for it.
+- **Stronger tests.** The date in the tests and the CUJ is now **5 Oct**, a day with one digit, so
+  the wrong date format (`d`, which gives `05`) is caught. New tests: the error page still shows the
+  list; an empty title shows "This field is required."; a past date (1 Jan 2000) is allowed. The
+  over-200 test now also checks the error message. The date box is checked as a whole `<input>`.
+- **Each new test was shown failing against a deliberate bug** (put back afterwards): always
+  showing the date; the format `d M Y`; an empty list on the error page; deleting the title's
+  errors from the template; rejecting dates before 2020; a date box without `type="date"`.
+
+After the fixes: `Unit: 4 passed`, `Integration: 21 passed`, `CUJ: 1 passed`.
+
+## Risks
+
+- **The error page is shown at `/add/`.** When the form has errors, the browser's address bar shows
+  `/add/`. Reloading that page sends the form again (the browser asks first), and opening `/add/`
+  directly gives `405 Method Not Allowed`, because it accepts `POST` only. We accept this: it is the
+  standard Django way, and nothing is saved until the form is correct.

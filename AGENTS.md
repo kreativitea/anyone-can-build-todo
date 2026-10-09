@@ -19,7 +19,7 @@ in a SQLite database, the file `db.sqlite3`, which is not in git.
 | `todos/models.py` | The `Todo` table: `title`, `done`, `due_date`, `created_at`. |
 | `todos/forms.py` | `TodoForm`: the add form, built from the model. It checks the title and the due date. |
 | `todos/urls.py` | The four addresses: the list, add, toggle, delete. |
-| `todos/views.py` | One function per address. Add, toggle and delete accept `POST` only, then send the browser back to the list. If the add form has errors, the page is shown again with the errors and what the person typed. |
+| `todos/views.py` | One function per address. Add, toggle and delete accept `POST` only, then send the browser back to the list. If the add form has errors, the page is shown again with the errors and what the person typed. Every key the list page needs goes in `page_context(request, form)`, so both views get it. |
 | `todos/templates/todos/todo_list.html` | The one page: the add form (drawn by Django from `TodoForm`) and the list. |
 | `todos/tests/unit/` | Unit tests: one piece alone, like the model, with no request. |
 | `todos/tests/integration/` | Integration tests: requests through Django's test client, from the URL to the database. |
