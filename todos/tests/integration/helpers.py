@@ -567,3 +567,74 @@ def link_href(response, name):
     if len(hrefs) != 1:
         raise AssertionError(f"{len(hrefs)} links named {name!r}, not 1")
     return hrefs[0]
+
+
+# Accounts (17).
+
+LOGIN_URL = "/accounts/login/"
+SIGNUP_URL = "/accounts/signup/"
+LOGOUT_URL = "/accounts/logout/"
+
+
+def account_bar(username):
+    """The account bar at the top of every page, exactly, without the CSRF token."""
+    return (
+        '<div class="account">'
+        f"Logged in as <strong>{escape(username)}</strong>"
+        f'<form method="post" action="{LOGOUT_URL}">'
+        '<button type="submit">Log out</button></form>'
+        "</div>"
+    )
+
+
+class ClassCounter(HTMLParser):
+    """Counts the elements with one tag and one exact class, like <div class="account">."""
+
+    def __init__(self, html, tag, class_name):
+        super().__init__()
+        self.tag = tag
+        self.class_name = class_name
+        self.count = 0
+        self.feed(html)
+
+    def handle_starttag(self, tag, attrs):
+        if tag == self.tag and dict(attrs).get("class") == self.class_name:
+            self.count += 1
+
+
+def count_elements(response, tag, class_name):
+    """How many <tag class="class_name"> elements the page has."""
+    return ClassCounter(response.content.decode(), tag, class_name).count
+
+
+def send_form(client, page, button_name, **typed):
+    """Press the one button named `button_name` on `page`, like a browser.
+
+    The form's own fields (the CSRF token, `next`) are sent with what was
+    typed. Follows the redirects and returns the last page.
+    """
+    pairs = [
+        (form, button)
+        for form in page_forms(page)
+        for button in form.buttons
+        if button.accessible_name == button_name
+    ]
+    if len(pairs) != 1:
+        raise AssertionError(f"{len(pairs)} buttons named {button_name!r}, not 1")
+    form, button = pairs[0]
+    return client.post(form.action, form.data(button, **typed), follow=True)
+
+
+def log_in(client, username, password=TEST_PASSWORD):
+    """Log in through the real log-in page, like a person, and return the list.
+
+    Opening "/" shows the log-in page. Fill in the form, press "Log in", and
+    land on the list.
+    """
+    page = client.get("/", follow=True)
+    if page.redirect_chain != [(f"{LOGIN_URL}?next=/", 302)]:
+        raise AssertionError(f"/ did not show the log-in page: {page.redirect_chain}")
+    page = send_form(client, page, "Log in", username=username, password=password)
+    if page.redirect_chain != [("/", 302)]:
+        raise AssertionError(f"Log in did not land on the list: {page.redirect_chain}")
+    return page
