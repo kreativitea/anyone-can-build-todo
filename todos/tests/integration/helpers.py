@@ -17,6 +17,11 @@ from todos.models import Todo
 # A test value only, for test users. Not a real password.
 TEST_PASSWORD = "plum-tree-river-42"
 
+# The account addresses (17).
+LOGIN_URL = "/accounts/login/"
+SIGNUP_URL = "/accounts/signup/"
+LOGOUT_URL = "/accounts/logout/"
+
 
 def make_user(username="ana"):
     """A saved user with the test password."""
@@ -294,6 +299,15 @@ def page_forms(response):
     return PageForms(response.content.decode(), page_path(response)).forms
 
 
+def page_post_forms(response):
+    """The POST forms of the page itself: not the account bar's Log out form."""
+    return [
+        form
+        for form in page_forms(response)
+        if form.method == "post" and form.action != LOGOUT_URL
+    ]
+
+
 class Row(NamedTuple):
     """One <li> of the list: its `id`, its classes, and the title in it."""
 
@@ -307,6 +321,8 @@ class PageParts(HTMLParser):
 
     `post_actions` is the `action` of every form with method="post", read by
     `PageForms`, so a form with no action counts as the page's own address.
+    The account bar's Log out form is not in it: it is on every page, and
+    test_accounts.py checks it.
     `titles` is the title of every to-do shown, in order: the text of each
     <span class="title">, and of an <a> directly inside it (the title link).
     Other tags inside the span (the due date is a <small>) are not the title.
@@ -328,7 +344,7 @@ class PageParts(HTMLParser):
         self.post_actions = [
             form.action
             for form in PageForms(html, page_path).forms
-            if form.method == "post"
+            if form.method == "post" and form.action != LOGOUT_URL
         ]
         self.html_lang = None
         self.titles = []
@@ -570,10 +586,6 @@ def link_href(response, name):
 
 
 # Accounts (17).
-
-LOGIN_URL = "/accounts/login/"
-SIGNUP_URL = "/accounts/signup/"
-LOGOUT_URL = "/accounts/logout/"
 
 
 def account_bar(username):

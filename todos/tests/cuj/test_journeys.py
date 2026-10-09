@@ -185,6 +185,7 @@ class JourneyTests(TestCase):
         self.assertEqual(
             names,
             [
+                "Log out",  # the account bar, at the top of every page
                 "Undo Buy flour",
                 "Delete Buy flour",
                 "Done Bake",

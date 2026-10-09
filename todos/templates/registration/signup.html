@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+
+{% block title %}Sign up – To-do list{% endblock %}
+
+{% block style %}
+    form.account-form div { display: flex; flex-direction: column; gap: 0.25rem; margin-bottom: 1rem; }
+    form.account-form input { padding: 0.5rem; font: inherit; }
+    form.account-form .helptext { color: #666; font-size: 0.85rem; }
+    form.account-form .helptext ul { margin: 0.25rem 0 0; padding-left: 1.25rem; }
+{% endblock %}
+
+{% block content %}
+  <h1>Sign up</h1>
+  <form class="account-form" method="post" action="{% url 'signup' %}">
+    {% csrf_token %}
+    {{ form }}
+    <button type="submit">Sign up</button>
+  </form>
+  <p>Already have an account? <a href="{% url 'login' %}">Log in</a></p>
+{% endblock %}

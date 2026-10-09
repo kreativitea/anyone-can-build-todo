@@ -15,6 +15,7 @@ from todos.models import Subtask, Todo
 from todos.tests.integration.helpers import (
     LoggedInTestCase,
     page_forms,
+    page_post_forms,
     page_without_csrf,
     pane_element,
     show_date,
@@ -244,13 +245,14 @@ class DoneAndUndoTests(LoggedInTestCase):
             reverse("admin:todos_todo_change", args=[todo.pk]), data
         )
         self.assertEqual(response.status_code, 302)
-        self.client.logout()
+        # Back to ana, the owner, for the rest of the test.
+        self.client.force_login(self.user)
         return response
 
     def edit(self, todo, **changes):
         """Save `todo` on its edit page, sending what the page's form sends."""
         page = self.client.get(reverse("todo_edit", args=[todo.pk]))
-        (form,) = [f for f in page_forms(page) if f.method == "post"]
+        (form,) = page_post_forms(page)
         response = self.client.post(form.action, form.data(**changes))
         self.assertEqual(response.status_code, 302)
         return response
@@ -391,7 +393,7 @@ class MonthlyDayTests(LoggedInTestCase):
         copy = self.press_done(Todo.objects.get())
         self.assertEqual(copy.due_date, date(2027, 2, 28))
         page = self.client.get(reverse("todo_edit", args=[copy.pk]))
-        (form,) = [f for f in page_forms(page) if f.method == "post"]
+        (form,) = page_post_forms(page)
         self.client.post(form.action, form.data(due_date="2027-02-27"))
         self.assertEqual(self.press_done(copy).due_date, date(2027, 3, 27))
 
@@ -402,7 +404,7 @@ class MonthlyDayTests(LoggedInTestCase):
         )
         copy = self.press_done(Todo.objects.get())
         page = self.client.get(reverse("todo_edit", args=[copy.pk]))
-        (form,) = [f for f in page_forms(page) if f.method == "post"]
+        (form,) = page_post_forms(page)
         self.client.post(form.action, form.data(title="Pay rent"))
         self.assertEqual(self.press_done(copy).due_date, date(2027, 3, 31))
 
@@ -501,7 +503,7 @@ class RepeatFormTests(LoggedInTestCase):
         copy = bins.next_todo
         # Send exactly what the edit page's form sends, with a new date.
         page = self.client.get(reverse("todo_edit", args=[copy.pk]))
-        (form,) = [f for f in page_forms(page) if f.method == "post"]
+        (form,) = page_post_forms(page)
         self.assertEqual(form.fields["repeat"], ["weekly"])
         response = self.client.post(form.action, form.data(due_date="2026-10-14"))
         self.assertEqual(response.status_code, 302)

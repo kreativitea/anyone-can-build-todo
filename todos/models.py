@@ -156,6 +156,15 @@ class Todo(models.Model):
         """The titles of this to-do's steps, oldest first."""
         return list(self.subtasks.values_list("title", flat=True))
 
+    def mark_edited(self):
+        """A change to the steps is an edit of the to-do (owner decision).
+
+        So Undo on a repeating to-do never deletes a copy whose steps changed.
+        One UPDATE; it never touches the to-do's `done`. The view found this
+        to-do through its owner first.
+        """
+        Todo.objects.filter(pk=self.pk).update(edited=True)
+
     def set_done(self, target):
         """Done (target=True) or Undo (target=False). Does nothing if it is already so.
 

@@ -3,6 +3,9 @@ from collections.abc import Callable
 from typing import NamedTuple
 from urllib.parse import urlencode
 
+from django.contrib.auth import login
+from django.contrib.auth.decorators import login_not_required
+from django.contrib.auth.forms import UserCreationForm
 from django.db import DatabaseError, transaction
 from django.db.models import F, Q
 from django.db.models.functions import Lower
@@ -12,7 +15,7 @@ from django.urls import reverse
 from django.views.decorators.http import require_http_methods, require_POST
 
 from .forms import SubtaskForm, TodoEditForm, TodoForm
-from .models import Subtask, Todo
+from .models import Todo
 
 # Django refuses a form with more than 1,000 fields, and then nothing is
 # deleted. So the delete-completed button offers at most this many, oldest
@@ -262,10 +265,14 @@ def back_to_list(request):
 
 
 def page_context(request, form):
-    """What the list page needs. Both views use this, so a new key goes here once."""
+    """What the list page needs. Both views use this, so a new key goes here once.
+
+    Only the person's own to-dos: every query starts with for_user.
+    """
     params = list_params(request.GET)
+    mine = Todo.objects.for_user(request.user)
     # Each to-do comes with its step counts, in the same query (no N+1).
-    todos = Todo.objects.with_subtask_progress()
+    todos = Todo.objects.for_user(request.user).with_subtask_progress()
     todos = filter_todos(todos, params)
     todos = search_todos(todos, params)
     todos = sort_todos(todos, params)
@@ -277,10 +284,10 @@ def page_context(request, form):
     return {
         "todos": todos,
         "form": form,
-        "has_todos": Todo.objects.exists(),
-        "remaining_count": Todo.objects.remaining().count(),
+        "has_todos": mine.exists(),
+        "remaining_count": mine.remaining().count(),
         "completed_ids": list(
-            Todo.objects.completed()
+            mine.completed()
             .order_by("created_at", "pk")
             .values_list("pk", flat=True)[:MAX_DELETE_AT_ONCE]
         ),
@@ -322,7 +329,7 @@ WANTED = {"1": True, "0": False}
 @require_POST
 def todo_toggle(request, pk):
     """Done (done=1) or Undo (done=0). Anything else is a bad request: 400."""
-    todo = get_object_or_404(Todo, pk=pk)
+    todo = get_object_or_404(Todo.objects.for_user(request.user), pk=pk)
     target = WANTED.get(request.POST.get("done"))
     if target is None:
         return HttpResponseBadRequest("done must be 1 or 0")
@@ -338,7 +345,7 @@ def todo_edit(request, pk):
     The template gets `pk`, not the to-do, so it never shows a title that was
     not saved.
     """
-    todo = get_object_or_404(Todo, pk=pk)
+    todo = get_object_or_404(Todo.objects.for_user(request.user), pk=pk)
     params = list_params(request.GET)
     if request.method == "POST":
         form = TodoEditForm(request.POST, instance=todo)
@@ -372,7 +379,7 @@ def todo_edit(request, pk):
 
 @require_POST
 def todo_delete(request, pk):
-    todo = get_object_or_404(Todo, pk=pk)
+    todo = get_object_or_404(Todo.objects.for_user(request.user), pk=pk)
     todo.delete()
     return back_to_list(request)
 
@@ -383,7 +390,8 @@ def todo_delete_completed(request):
     ids = [pk for value in request.POST.getlist("ids") if (pk := clean_id(value))]
     # One delete for all of them. Django also deletes their steps (CASCADE),
     # in one more query. Never delete them one by one in a loop.
-    Todo.objects.completed().filter(pk__in=ids).delete()
+    # Only the person's own: another person's ids delete nothing.
+    Todo.objects.for_user(request.user).completed().filter(pk__in=ids).delete()
     return back_to_list(request)
 
 
@@ -392,19 +400,20 @@ def todo_delete_completed(request):
 # a link can only change a step of the to-do in its own address.
 
 
-def subtask_page(request, pk, title, subtask_form):
+def subtask_page(request, todo, subtask_form):
     """The steps page of one to-do. subtask_list and subtask_add's error path use this.
 
-    The template gets `pk` and `title`, not the to-do, like the edit page.
+    `todo` was found through its owner. The template gets `pk` and `title`,
+    not the to-do, like the edit page.
     """
     params = list_params(request.GET)
     return render(
         request,
         "todos/subtask_list.html",
         {
-            "pk": pk,
-            "title": title,
-            "subtasks": Subtask.objects.filter(todo_id=pk),
+            "pk": todo.pk,
+            "title": todo.title,
+            "subtasks": todo.subtasks.all(),
             "subtask_form": subtask_form,
             "list_query": list_query(params),
             "list_url": reverse("todo_list") + list_query(params),
@@ -420,62 +429,74 @@ def back_to_subtasks(request, pk):
 
 
 def subtask_list(request, pk):
-    todo = get_object_or_404(Todo, pk=pk)
-    return subtask_page(request, pk, todo.title, SubtaskForm())
+    todo = get_object_or_404(Todo.objects.for_user(request.user), pk=pk)
+    return subtask_page(request, todo, SubtaskForm())
 
 
 @require_POST
 def subtask_add(request, pk):
-    todo = get_object_or_404(Todo, pk=pk)
+    todo = get_object_or_404(Todo.objects.for_user(request.user), pk=pk)
     form = SubtaskForm(request.POST)
     if form.is_valid():
         form.instance.todo = todo
         with transaction.atomic():
             form.save()
-            mark_edited(todo.pk)
+            todo.mark_edited()
         return back_to_subtasks(request, pk)
-    return subtask_page(request, pk, todo.title, form)
+    return subtask_page(request, todo, form)
 
 
-def mark_edited(pk):
-    """A change to the steps is an edit of the to-do (owner decision).
+def get_subtask_or_404(request, pk, subtask_pk):
+    """The to-do `pk` and its step `subtask_pk`, or 404.
 
-    So Undo on a repeating to-do never deletes a copy whose steps changed.
-    One UPDATE; it never touches the to-do's `done`.
+    First the to-do, through its owner, then the step among ITS steps
+    (`todo.subtasks`), so a link can never change a step of another to-do or
+    of another person. Looking up the to-do first also turns an id too big
+    for the database into a 404, not a crash. Sharing (20) changes only the
+    first line.
     """
-    Todo.objects.filter(pk=pk).update(edited=True)
-
-
-def get_subtask_or_404(pk, subtask_pk):
-    """Step `subtask_pk` of to-do `pk`, or 404.
-
-    First the to-do, then the step among ITS steps (`todo.subtasks`), so a link
-    can never change a step of another to-do. Looking up the to-do first also
-    turns an id too big for the database into a 404, not a crash.
-    Accounts (17) and sharing (20) change only the first line.
-    """
-    todo = get_object_or_404(Todo, pk=pk)
-    return get_object_or_404(todo.subtasks, pk=subtask_pk)
+    todo = get_object_or_404(Todo.objects.for_user(request.user), pk=pk)
+    return todo, get_object_or_404(todo.subtasks, pk=subtask_pk)
 
 
 @require_POST
 def subtask_done(request, pk, subtask_pk):
     """Done (done=1) or Undo (done=0) on one step. It never changes the to-do."""
-    subtask = get_subtask_or_404(pk, subtask_pk)
+    todo, subtask = get_subtask_or_404(request, pk, subtask_pk)
     wanted = WANTED.get(request.POST.get("done"))
     if wanted is None:
         return HttpResponseBadRequest("done must be 1 or 0")
     subtask.done = wanted
     with transaction.atomic():
         subtask.save(update_fields=["done"])
-        mark_edited(pk)
+        todo.mark_edited()
     return back_to_subtasks(request, pk)
 
 
 @require_POST
 def subtask_delete(request, pk, subtask_pk):
-    subtask = get_subtask_or_404(pk, subtask_pk)
+    todo, subtask = get_subtask_or_404(request, pk, subtask_pk)
     with transaction.atomic():
         subtask.delete()
-        mark_edited(pk)
+        todo.mark_edited()
     return back_to_subtasks(request, pk)
+
+
+# Accounts (17). Log in and log out are Django's own views (config/urls.py).
+
+
+@login_not_required
+@require_http_methods(["GET", "POST"])
+def signup(request):
+    """Sign up with a username and a password, then be logged in.
+
+    Django's UserCreationForm checks the password with the validators in
+    settings.py (too short, too common, only numbers, too like the username).
+    """
+    if request.user.is_authenticated:
+        return redirect("todo_list")
+    form = UserCreationForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        login(request, form.save())
+        return redirect("todo_list")
+    return render(request, "registration/signup.html", {"form": form})

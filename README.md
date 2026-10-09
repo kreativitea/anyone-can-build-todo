@@ -1,6 +1,7 @@
 # To-do list
 
-The most basic to-do list in Django: add a to-do, mark it done, delete it.
+The most basic to-do list in Django: add a to-do, mark it done, delete it. Each person signs
+up and logs in, and sees only their own to-dos.
 
 ## Run it on your laptop
 
@@ -51,7 +52,8 @@ uv run pre-commit install
 uv run python manage.py runserver
 ```
 
-Open <http://127.0.0.1:8000/>. Press `Ctrl+C` in the terminal to stop the server.
+Open <http://127.0.0.1:8000/>. You see the log-in page: press **Sign up** to make an account.
+Press `Ctrl+C` in the terminal to stop the server.
 
 **7. Run the tests.**
 
@@ -106,11 +108,20 @@ A live server needs three environment variables. Never put their real values in 
 | `DJANGO_ALLOWED_HOSTS` | The site's address without `https://`, for example `my-todo.onrender.com` |
 
 With `DJANGO_DEBUG` set to `False`, the site only works over HTTPS.
+If `DJANGO_DEBUG` is `False` and `DJANGO_SECRET_KEY` is not set, the site refuses to start: the
+secret key signs every log-in, so a live server must never use the default key that is in git.
 
 Build command:
 
 ```bash
 pip install uv && uv sync --locked --no-dev && uv run --no-dev python manage.py collectstatic --no-input && uv run --no-dev python manage.py migrate
+```
+
+Before the first deploy, and after changing settings, check for unsafe settings (with the live
+server's environment variables set):
+
+```bash
+uv run python manage.py check --deploy
 ```
 
 Start command:

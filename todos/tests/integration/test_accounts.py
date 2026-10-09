@@ -109,12 +109,31 @@ class VisitorTests(TestCase):
             response, '<label for="id_password">Password:</label>', html=True
         )
 
-    def test_admin_sends_a_visitor_to_our_log_in(self):
-        response = self.client.get("/admin/")
+    def test_admin_log_in_stays_open(self):
+        # What Django 5.2 does, pinned: the admin's front page and its own
+        # log-in page are open to visitors (the admin checks staff itself);
+        # its other pages need log-in, so a visitor goes to OUR log-in page.
+        # A staff person logs in there and is sent on to the admin.
         self.assertRedirects(
-            response, f"{LOGIN_URL}?next=/admin/", fetch_redirect_response=False
+            self.client.get("/admin/"),
+            "/admin/login/?next=%2Fadmin%2F",
+            fetch_redirect_response=False,
+        )
+        self.assertRedirects(
+            self.client.get("/admin/todos/todo/"),
+            f"{LOGIN_URL}?next=%2Fadmin%2Ftodos%2Ftodo%2F",
+            fetch_redirect_response=False,
         )
         self.assertEqual(self.client.get("/admin/login/").status_code, 200)
+
+    def test_admin_is_closed_to_a_person_who_is_not_staff(self):
+        self.client.force_login(self.ana)
+        response = self.client.get("/admin/todos/todo/")
+        self.assertRedirects(
+            response,
+            "/admin/login/?next=%2Fadmin%2Ftodos%2Ftodo%2F",
+            fetch_redirect_response=False,
+        )
 
 
 class SignUpTests(TestCase):

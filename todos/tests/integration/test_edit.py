@@ -9,8 +9,8 @@ from todos.forms import TodoEditForm
 from todos.models import Todo
 from todos.tests.integration.helpers import (
     LoggedInTestCase,
-    page_forms,
     page_parts,
+    page_post_forms,
     page_without_csrf,
     pane_element,
     show_date,
@@ -309,7 +309,7 @@ class EditPriorityAndNotesTests(LoggedInTestCase):
     def edit_page_form(self):
         """The edit page's one POST form, read like a browser reads it."""
         page = self.client.get(self.url)
-        (form,) = [form for form in page_forms(page) if form.method == "post"]
+        (form,) = page_post_forms(page)
         return form
 
     def test_edit_page_shows_saved_priority_and_notes(self):
