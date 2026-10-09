@@ -72,14 +72,20 @@ DEFAULT_FILTER = FILTERS[0]
 FILTER_BY_VALUE = {f.value: f for f in FILTERS}
 
 # The sort links: (the value in the address, the word on the page, the order).
-# The first one is the default: it needs no ?sort=. Every order ends with
-# created_at, then pk, so ties never jump. nulls_last puts "no due date" last.
+# The first one is the default: it needs no ?sort=. Every order starts with
+# "done" (False before True), so completed to-dos go last (owner decision).
+# Every order ends with created_at, then pk, so ties never jump. nulls_last
+# puts "no due date" last.
 DUE_SOONEST_FIRST = F("due_date").asc(nulls_last=True)
 SORTS = [
-    ("created", "Date added", ("created_at", "pk")),
-    ("due", "Due date", (DUE_SOONEST_FIRST, "-priority", "created_at", "pk")),
-    ("priority", "Priority", ("-priority", DUE_SOONEST_FIRST, "created_at", "pk")),
-    ("title", "Title", (Lower("title"), "created_at", "pk")),
+    ("created", "Date added", ("done", "created_at", "pk")),
+    ("due", "Due date", ("done", DUE_SOONEST_FIRST, "-priority", "created_at", "pk")),
+    (
+        "priority",
+        "Priority",
+        ("done", "-priority", DUE_SOONEST_FIRST, "created_at", "pk"),
+    ),
+    ("title", "Title", ("done", Lower("title"), "created_at", "pk")),
 ]
 DEFAULT_SORT = SORTS[0][0]
 SORT_ORDERS = {value: order for value, _label, order in SORTS}
