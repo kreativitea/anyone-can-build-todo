@@ -1,3 +1,4 @@
+import re
 from datetime import date
 
 from django.db import connection
@@ -6,6 +7,38 @@ from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 
 from todos.models import Todo
+
+CSRF_INPUT = re.compile(
+    r'<input type="hidden" name="csrfmiddlewaretoken" value="[^"]*">'
+)
+
+
+def page_without_csrf(response):
+    """The page's HTML without the CSRF token inputs.
+
+    The token is different every time the page is drawn, so a test cannot
+    write it down. Taking it out lets a test compare whole forms exactly.
+    """
+    return CSRF_INPUT.sub("", response.content.decode())
+
+
+def delete_completed_form(ids):
+    """The delete-completed form, exactly as the page must show it."""
+    hidden = "".join(f'<input type="hidden" name="ids" value="{pk}">' for pk in ids)
+    count = len(ids)
+    return (
+        '<form class="delete-completed" method="post" action="/delete-completed/">'
+        f"{hidden}"
+        f'<button type="submit">Delete {count} completed to-do'
+        f"{'' if count == 1 else 's'}</button>"
+        "</form>"
+    )
+
+
+def list_footer(count_text, completed_ids=()):
+    """The whole footer under the list, exactly as the page must show it."""
+    form = delete_completed_form(completed_ids) if completed_ids else ""
+    return f'<div class="list-footer"><p class="count">{count_text}</p>{form}</div>'
 
 
 class TodoTests(TestCase):
@@ -147,18 +180,23 @@ class TodoTests(TestCase):
 class CountTests(TestCase):
     """How many to-dos are left, shown under the list."""
 
-    def count_footer(self, text):
-        """The whole footer, as the page must show it."""
-        return f'<div class="list-footer"><p class="count">{text}</p></div>'
+    def assertFooter(self, response, text, completed=()):
+        """The whole footer is on the page once, exactly.
+
+        A completed to-do also puts the delete-completed button in the footer,
+        so `completed` names them.
+        """
+        footer = list_footer(text, [todo.pk for todo in completed])
+        self.assertInHTML(footer, page_without_csrf(response), count=1)
 
     # Count: new behaviour.
 
     def test_count_is_shown_under_the_list(self):
         Todo.objects.create(title="Buy milk")
         Todo.objects.create(title="Call home")
-        Todo.objects.create(title="Read chapter 3", done=True)
+        read = Todo.objects.create(title="Read chapter 3", done=True)
         response = self.client.get(reverse("todo_list"))
-        self.assertContains(response, self.count_footer("2 items left"), html=True)
+        self.assertFooter(response, "2 items left", completed=[read])
 
     def test_count_comes_after_the_list(self):
         Todo.objects.create(title="Buy milk")
@@ -169,12 +207,12 @@ class CountTests(TestCase):
     def test_count_says_item_for_one(self):
         Todo.objects.create(title="Buy milk")
         response = self.client.get(reverse("todo_list"))
-        self.assertContains(response, self.count_footer("1 item left"), html=True)
+        self.assertFooter(response, "1 item left")
 
     def test_count_says_items_for_zero(self):
-        Todo.objects.create(title="Buy milk", done=True)
+        milk = Todo.objects.create(title="Buy milk", done=True)
         response = self.client.get(reverse("todo_list"))
-        self.assertContains(response, self.count_footer("0 items left"), html=True)
+        self.assertFooter(response, "0 items left", completed=[milk])
 
     def test_count_is_on_the_error_page(self):
         Todo.objects.create(title="Call home")
@@ -182,16 +220,16 @@ class CountTests(TestCase):
             reverse("todo_add"), {"title": "Buy milk", "due_date": "not-a-date"}
         )
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, self.count_footer("1 item left"), html=True)
+        self.assertFooter(response, "1 item left")
 
     def test_count_follows_done_and_undo(self):
         first = Todo.objects.create(title="Buy milk")
         Todo.objects.create(title="Call home")
         toggle = reverse("todo_toggle", args=[first.pk])
         response = self.client.post(toggle, follow=True)
-        self.assertContains(response, self.count_footer("1 item left"), html=True)
+        self.assertFooter(response, "1 item left", completed=[first])
         response = self.client.post(toggle, follow=True)
-        self.assertContains(response, self.count_footer("2 items left"), html=True)
+        self.assertFooter(response, "2 items left")
 
     def test_the_database_does_the_counting(self):
         Todo.objects.create(title="Buy milk")
