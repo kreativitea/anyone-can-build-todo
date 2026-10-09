@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+
+{% block title %}Steps: {{ title }}{% endblock %}
+
+{% block style %}
+    h1 { overflow-wrap: anywhere; }
+    ul.steps { list-style: none; padding: 0; }
+    .steps li { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem; border-bottom: 1px solid #ddd; }
+    .steps li .title { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+    .steps li.done .title { text-decoration: line-through; color: #666; }
+    form.add-step { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin: 1.5rem 0; }
+    form.add-step input[name=title] { flex: 1 1 12rem; padding: 0.5rem; font-size: 1rem; }
+    form.add-step .errorlist { flex: 1 1 100%; }
+{% endblock %}
+
+{% block content %}
+  <h1>Steps: {{ title }}</h1>
+
+  <ul class="steps">
+    {% for subtask in subtasks %}
+      <li class="{% if subtask.done %}done{% endif %}">
+        <span class="title">{{ subtask.title }}</span>
+        {# The button sends the state the person wants: done=1 or done=0. #}
+        <form method="post" action="{% url 'subtask_done' pk subtask.pk %}{{ list_query }}">
+          {% csrf_token %}
+          {% if subtask.done %}
+            <button type="submit" name="done" value="0" aria-label="Undo {{ subtask.title }}">Undo</button>
+          {% else %}
+            <button type="submit" name="done" value="1" aria-label="Done {{ subtask.title }}">Done</button>
+          {% endif %}
+        </form>
+        <form method="post" action="{% url 'subtask_delete' pk subtask.pk %}{{ list_query }}">
+          {% csrf_token %}
+          <button type="submit" aria-label="Delete {{ subtask.title }}">Delete</button>
+        </form>
+      </li>
+    {% empty %}
+      <li>No steps yet.</li>
+    {% endfor %}
+  </ul>
+
+  <form class="add-step" method="post" action="{% url 'subtask_add' pk %}{{ list_query }}">
+    {% csrf_token %}
+    {{ subtask_form.title.errors }}
+    {{ subtask_form.title.label_tag }}
+    {{ subtask_form.title }}
+    <button type="submit">Add step</button>
+  </form>
+
+  <p><a href="{{ list_url }}">Back to the list</a></p>
+{% endblock %}

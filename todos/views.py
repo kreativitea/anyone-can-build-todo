@@ -11,8 +11,8 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_http_methods, require_POST
 
-from .forms import TodoEditForm, TodoForm
-from .models import Todo
+from .forms import SubtaskForm, TodoEditForm, TodoForm
+from .models import Subtask, Todo
 
 # Django refuses a form with more than 1,000 fields, and then nothing is
 # deleted. So the delete-completed button offers at most this many, oldest
@@ -264,7 +264,8 @@ def back_to_list(request):
 def page_context(request, form):
     """What the list page needs. Both views use this, so a new key goes here once."""
     params = list_params(request.GET)
-    todos = Todo.objects.all()
+    # Each to-do comes with its step counts, in the same query (no N+1).
+    todos = Todo.objects.with_subtask_progress()
     todos = filter_todos(todos, params)
     todos = search_todos(todos, params)
     todos = sort_todos(todos, params)
@@ -378,5 +379,86 @@ def todo_delete(request, pk):
 def todo_delete_completed(request):
     """Delete the completed to-dos whose ids the page sent, and only those."""
     ids = [pk for value in request.POST.getlist("ids") if (pk := clean_id(value))]
+    # One delete for all of them. Django also deletes their steps (CASCADE),
+    # in one more query. Never delete them one by one in a loop.
     Todo.objects.completed().filter(pk__in=ids).delete()
     return back_to_list(request)
+
+
+# Steps (subtasks): each to-do's own small page, /<id>/subtasks/.
+# A step is ALWAYS looked up among its to-do's steps (get_subtask_or_404), so
+# a link can only change a step of the to-do in its own address.
+
+
+def subtask_page(request, pk, title, subtask_form):
+    """The steps page of one to-do. subtask_list and subtask_add's error path use this.
+
+    The template gets `pk` and `title`, not the to-do, like the edit page.
+    """
+    params = list_params(request.GET)
+    return render(
+        request,
+        "todos/subtask_list.html",
+        {
+            "pk": pk,
+            "title": title,
+            "subtasks": Subtask.objects.filter(todo_id=pk),
+            "subtask_form": subtask_form,
+            "list_query": list_query(params),
+            "list_url": reverse("todo_list") + list_query(params),
+        },
+    )
+
+
+def back_to_subtasks(request, pk):
+    """Back to the steps page, with the same list settings. Always our own page."""
+    return redirect(
+        reverse("subtask_list", args=[pk]) + list_query(list_params(request.GET))
+    )
+
+
+def subtask_list(request, pk):
+    todo = get_object_or_404(Todo, pk=pk)
+    return subtask_page(request, pk, todo.title, SubtaskForm())
+
+
+@require_POST
+def subtask_add(request, pk):
+    todo = get_object_or_404(Todo, pk=pk)
+    form = SubtaskForm(request.POST)
+    if form.is_valid():
+        form.instance.todo = todo
+        form.save()
+        return back_to_subtasks(request, pk)
+    return subtask_page(request, pk, todo.title, form)
+
+
+def get_subtask_or_404(pk, subtask_pk):
+    """Step `subtask_pk` of to-do `pk`, or 404.
+
+    First the to-do, then the step among ITS steps (`todo.subtasks`), so a link
+    can never change a step of another to-do. Looking up the to-do first also
+    turns an id too big for the database into a 404, not a crash.
+    Accounts (17) and sharing (20) change only the first line.
+    """
+    todo = get_object_or_404(Todo, pk=pk)
+    return get_object_or_404(todo.subtasks, pk=subtask_pk)
+
+
+@require_POST
+def subtask_done(request, pk, subtask_pk):
+    """Done (done=1) or Undo (done=0) on one step. It never changes the to-do."""
+    subtask = get_subtask_or_404(pk, subtask_pk)
+    wanted = WANTED.get(request.POST.get("done"))
+    if wanted is None:
+        return HttpResponseBadRequest("done must be 1 or 0")
+    subtask.done = wanted
+    subtask.save(update_fields=["done"])
+    return back_to_subtasks(request, pk)
+
+
+@require_POST
+def subtask_delete(request, pk, subtask_pk):
+    subtask = get_subtask_or_404(pk, subtask_pk)
+    subtask.delete()
+    return back_to_subtasks(request, pk)

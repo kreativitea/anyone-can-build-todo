@@ -22,4 +22,7 @@
       <a href="{{ list_url }}">Cancel</a>
     </div>
   </form>
+
+  {# Outside the edit form: the steps have their own page. #}
+  <p><a href="{% url 'subtask_list' pk %}{{ list_query }}">Steps</a></p>
 {% endblock %}

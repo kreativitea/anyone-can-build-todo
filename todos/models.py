@@ -1,6 +1,7 @@
 from django.core.exceptions import ValidationError
 from django.core.validators import MaxLengthValidator
 from django.db import models, transaction
+from django.db.models import Count, Q
 from django.utils import timezone
 
 from . import repeat as rp
@@ -17,6 +18,19 @@ class TodoQuerySet(models.QuerySet):
     def completed(self):
         """The to-dos that are done."""
         return self.filter(done=True)
+
+    def with_subtask_progress(self):
+        """Each to-do with its number of steps, and of done steps, in the same query.
+
+        distinct=True counts each step once, even when a later JOIN (like tags)
+        puts the same step on two lines.
+        """
+        return self.annotate(
+            subtask_count=Count("subtasks", distinct=True),
+            subtask_done_count=Count(
+                "subtasks", filter=Q(subtasks__done=True), distinct=True
+            ),
+        )
 
 
 class Todo(models.Model):
@@ -154,3 +168,26 @@ class Todo(models.Model):
                     next_todo=None,
                     edited=False,
                 ).delete()  # SET_NULL empties fresh.next_todo
+
+
+class SubtaskQuerySet(models.QuerySet):
+    """Queries for steps. Empty for now; later step queries go here."""
+
+
+class Subtask(models.Model):
+    """A step inside a to-do. On the page it is called a "step"."""
+
+    # CASCADE: when a to-do is deleted, its steps are deleted too.
+    todo = models.ForeignKey(Todo, on_delete=models.CASCADE, related_name="subtasks")
+    title = models.CharField(max_length=200)
+    done = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    objects = SubtaskQuerySet.as_manager()
+
+    class Meta:
+        # Oldest first. The id breaks a tie when two steps have the same time.
+        ordering = ["created_at", "pk"]
+
+    def __str__(self):
+        return self.title
