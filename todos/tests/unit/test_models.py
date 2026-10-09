@@ -135,3 +135,27 @@ class RepeatModelTests(TestCase):
         ):
             copy = todo.next_copy()
         self.assertEqual(copy.due_date, date(2026, 10, 13))
+
+    # Review fixes: the remembered day, and "edited".
+
+    def test_new_todo_has_no_repeat_day_and_is_not_edited(self):
+        todo = Todo.objects.create(title="Buy milk")
+        self.assertIsNone(todo.repeat_day)
+        self.assertFalse(todo.edited)
+
+    def test_next_copy_keeps_the_remembered_day(self):
+        # Due 28 Feb, but the person chose the 31st: the next one is 31 Mar.
+        todo = Todo(
+            title="Pay rent",
+            repeat="monthly",
+            due_date=date(2027, 2, 28),
+            repeat_day=31,
+        )
+        copy = todo.next_copy()
+        self.assertEqual(copy.repeat_day, 31)
+        self.assertEqual(copy.due_date, date(2027, 3, 31))
+        self.assertFalse(copy.edited)
+
+    def test_next_copy_without_a_remembered_day_uses_the_due_dates_day(self):
+        todo = Todo(title="Pay rent", repeat="monthly", due_date=date(2027, 2, 28))
+        self.assertEqual(todo.next_copy().due_date, date(2027, 3, 28))

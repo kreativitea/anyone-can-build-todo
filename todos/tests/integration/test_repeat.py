@@ -207,26 +207,188 @@ class DoneAndUndoTests(TestCase):
         self.assertFalse(copy.done)
         self.assertEqual(copy.due_date, NEXT_MONDAY)
 
-    def test_admin_done_makes_no_copy(self):
-        # Owner decision: only the Done button makes the next copy.
+    def admin_save(self, todo, **changes):
+        """Save `todo` on its admin change page, with `changes` to its fields."""
         admin_user = User.objects.create_superuser("admin", "admin@example.test")
         self.client.force_login(admin_user)
+        data = {
+            "title": todo.title,
+            "due_date": todo.due_date.isoformat() if todo.due_date else "",
+            "priority": str(todo.priority),
+            "notes": todo.notes,
+            "repeat": todo.repeat,
+            "_save": "Save",
+        }
+        if todo.done:
+            data["done"] = "on"
+        data.update(changes)
+        if data.get("done") is False:
+            del data["done"]
         response = self.client.post(
-            reverse("admin:todos_todo_change", args=[self.bins.pk]),
-            {
-                "title": "Bins",
-                "done": "on",
-                "due_date": "2026-10-12",
-                "priority": "3",
-                "notes": "blue bag",
-                "repeat": "weekly",
-                "_save": "Save",
-            },
+            reverse("admin:todos_todo_change", args=[todo.pk]), data
         )
         self.assertEqual(response.status_code, 302)
+        self.client.logout()
+        return response
+
+    def edit(self, todo, **changes):
+        """Save `todo` on its edit page, sending what the page's form sends."""
+        page = self.client.get(reverse("todo_edit", args=[todo.pk]))
+        (form,) = [f for f in page_forms(page) if f.method == "post"]
+        response = self.client.post(form.action, form.data(**changes))
+        self.assertEqual(response.status_code, 302)
+        return response
+
+    def test_admin_done_makes_no_copy(self):
+        # Owner decision: only the Done button makes the next copy.
+        self.admin_save(self.bins, done="on")
         self.bins.refresh_from_db()
         self.assertTrue(self.bins.done)
         self.assertEqual(Todo.objects.count(), 1)
+
+    # Review fixes: Undo decides with the copy's own state, never by
+    # building the copy again from the original.
+
+    def test_undo_after_the_original_stopped_repeating(self):
+        # Done, then the completed original is set to "Does not repeat".
+        # Undo used to build the copy again with repeat "none": a 500 error.
+        self.press(self.bins, "1")
+        self.bins.refresh_from_db()
+        self.edit(self.bins, repeat="none")
+        response = self.press(self.bins, "0")
+        self.assertEqual(response.status_code, 302)
+        self.bins.refresh_from_db()
+        self.assertFalse(self.bins.done)
+        # The copy was not touched, so Undo deletes it.
+        self.assertEqual(list(Todo.objects.all()), [self.bins])
+
+    def test_undo_after_the_admin_stopped_the_repeat(self):
+        self.press(self.bins, "1")
+        self.bins.refresh_from_db()
+        self.admin_save(self.bins, repeat="none")
+        response = self.press(self.bins, "0")
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(list(Todo.objects.all()), [self.bins])
+
+    def test_undo_after_fixing_a_typo_in_the_original_deletes_the_copy(self):
+        # The copy has the old title, but nobody touched the COPY: it goes.
+        self.press(self.bins, "1")
+        self.bins.refresh_from_db()
+        self.edit(self.bins, title="Bins!")
+        self.press(self.bins, "0")
+        self.assertEqual(list(Todo.objects.all()), [self.bins])
+
+    def test_edit_and_admin_save_mark_a_todo_edited(self):
+        self.edit(self.bins)
+        self.bins.refresh_from_db()
+        self.assertTrue(self.bins.edited)
+        milk = Todo.objects.create(title="Buy milk")
+        self.admin_save(milk)
+        milk.refresh_from_db()
+        self.assertTrue(milk.edited)
+
+    def test_undo_keeps_a_copy_completed_in_the_admin(self):
+        self.press(self.bins, "1")
+        self.bins.refresh_from_db()
+        copy = self.bins.next_todo
+        self.admin_save(copy, done="on")
+        self.press(self.bins, "0")
+        copy.refresh_from_db()
+        self.assertTrue(copy.done)
+        self.assertIsNone(copy.next_todo)  # the admin made no copy of its own
+
+    def test_undo_keeps_a_completed_copy(self):
+        # Only the "copy is open" rule protects this copy: it has no copy of
+        # its own, and nobody edited it (completed by a plain update).
+        self.press(self.bins, "1")
+        self.bins.refresh_from_db()
+        copy = self.bins.next_todo
+        Todo.objects.filter(pk=copy.pk).update(done=True)
+        self.press(self.bins, "0")
+        copy.refresh_from_db()
+        self.assertTrue(copy.done)
+        self.assertFalse(copy.edited)
+
+    def test_undo_keeps_an_open_copy_that_has_its_own_copy(self):
+        # Monday -> Done -> Tuesday -> Done -> Wednesday, edit Wednesday,
+        # Undo Tuesday (Wednesday is kept: edited). Now Tuesday is open and
+        # untouched, but it has its own copy: Undo on Monday must keep it.
+        self.press(self.bins, "1")
+        self.bins.refresh_from_db()
+        second = self.bins.next_todo
+        self.press(second, "1")
+        second.refresh_from_db()
+        third = second.next_todo
+        self.edit(third, title="Bins and recycling")
+        self.press(second, "0")
+        second.refresh_from_db()
+        self.assertFalse(second.done)
+        self.assertFalse(second.edited)
+        self.assertEqual(second.next_todo, third)
+        self.press(self.bins, "0")
+        self.assertEqual(Todo.objects.count(), 3)
+        second.refresh_from_db()
+        self.assertEqual(second.next_todo, third)
+
+    def test_done_in_year_9999_makes_no_copy(self):
+        # The next date would be after 31 Dec 9999, the last date Python has.
+        far = Todo.objects.create(
+            title="Far away", due_date=date(9999, 12, 28), repeat="weekly"
+        )
+        response = self.press(far, "1")
+        self.assertEqual(response.status_code, 302)
+        far.refresh_from_db()
+        self.assertTrue(far.done)
+        self.assertIsNone(far.next_todo)
+        self.assertFalse(Todo.objects.filter(title="Far away", done=False).exists())
+
+
+class MonthlyDayTests(TestCase):
+    """Monthly remembers the day the person chose (owner decision)."""
+
+    def press_done(self, todo):
+        response = self.client.post(done(todo), {"done": "1"})
+        self.assertEqual(response.status_code, 302)
+        todo.refresh_from_db()
+        return todo.next_todo
+
+    def test_monthly_from_the_30th_never_drifts(self):
+        self.client.post(
+            reverse("todo_add"),
+            {"title": "Pay rent", "due_date": "2027-01-30", "repeat": "monthly"},
+        )
+        todo = Todo.objects.get()
+        dates = []
+        for _ in range(12):
+            todo = self.press_done(todo)
+            dates.append(todo.due_date)
+        expected = [date(2027, 2, 28)]
+        expected += [date(2027, month, 30) for month in range(3, 13)]
+        expected += [date(2028, 1, 30)]
+        self.assertEqual(dates, expected)
+
+    def test_editing_the_copys_date_moves_the_day(self):
+        self.client.post(
+            reverse("todo_add"),
+            {"title": "Pay rent", "due_date": "2027-01-31", "repeat": "monthly"},
+        )
+        copy = self.press_done(Todo.objects.get())
+        self.assertEqual(copy.due_date, date(2027, 2, 28))
+        page = self.client.get(reverse("todo_edit", args=[copy.pk]))
+        (form,) = [f for f in page_forms(page) if f.method == "post"]
+        self.client.post(form.action, form.data(due_date="2027-02-27"))
+        self.assertEqual(self.press_done(copy).due_date, date(2027, 3, 27))
+
+    def test_fixing_the_copys_title_keeps_the_day(self):
+        self.client.post(
+            reverse("todo_add"),
+            {"title": "Pay rnet", "due_date": "2027-01-31", "repeat": "monthly"},
+        )
+        copy = self.press_done(Todo.objects.get())
+        page = self.client.get(reverse("todo_edit", args=[copy.pk]))
+        (form,) = [f for f in page_forms(page) if f.method == "post"]
+        self.client.post(form.action, form.data(title="Pay rent"))
+        self.assertEqual(self.press_done(copy).due_date, date(2027, 3, 31))
 
 
 class RepeatFormTests(TestCase):
@@ -281,6 +443,15 @@ class RepeatFormTests(TestCase):
             "</select>",
             count=1,
             html=True,
+        )
+
+    def test_add_button_has_its_own_row(self):
+        # So it does not look like a part of the Repeats box.
+        page = page_without_csrf(self.client.get(reverse("todo_list")))
+        self.assertInHTML(
+            '<div class="add-actions"><button type="submit">Add</button></div>',
+            page,
+            count=1,
         )
 
     def test_done_and_undo_buttons_send_the_wanted_state(self):
