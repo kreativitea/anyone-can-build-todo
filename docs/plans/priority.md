@@ -1,6 +1,7 @@
 # Plan: a priority on each to-do (High, Medium, Low)
 
-Status: **approved.** The owner approved the second version.
+Status: **done.** Built on branch `feature/priority`. See "What happened" at the end. The owner
+approved the second version.
 
 **The owner's answer:** Medium shows **no** label. Only High and Low get a label.
 
@@ -427,3 +428,44 @@ code back. `git diff` must not show a broken line.
   again.
 - **Owner decision: no label for Medium.** The owner agreed. If this changes later, the template
   rule loses its `{% if %}`, and one test changes.
+
+## What happened
+
+The builder followed the plan. `main` was the same as the plan expected (`page_context`,
+`FILTERS`, `list_params`, `TodoForm` with `title` and `due_date`, migrations ending at `0002`).
+These are the places where it did something a little different, and why.
+
+1. **The CUJ check.** The plan says to add the check after `due 12 Oct 2026`. On `main` the CUJ
+   test types `2026-10-05`, so the check is after `due 5 Oct 2026`. Same place in the journey.
+2. **The select box is in `helpers.py`.** The exact `<select>` is needed by a unit test
+   (`test_forms.py`) and an integration test (`test_priority.py`). It is written once, as
+   `PRIORITY_SELECT` in `todos/tests/integration/helpers.py`, where shared test parts live.
+3. **"The title box still has `Buy milk`"** is checked on the **whole** `<input>` element
+   (`html=True`), not on the loose text `value="Buy milk"`, because the conventions ask for whole
+   elements.
+4. **How the new tests failed first.** All 13 new tests failed because there is no priority yet.
+   Some messages were a little different from the plan: `KeyError: 'priority'` (the form has no
+   such field) or `'Todo' object has no attribute 'priority'`, instead of `no attribute
+   'Priority'`. The reason is the same. The protecting test and the CUJ test passed.
+5. **The label is inside `<span class="title">`.** The due date is already inside that span, so
+   "after the title, before the due date" means inside it. A done to-do's title has a line
+   through it, and that line would also cross out the label. So the label's CSS also has
+   `display: inline-block` (a line through the parent does not reach an inline-block child), and
+   `margin-left: 0.4rem` for a small space after the title.
+6. **Break it on purpose.** All four bugs were caught:
+   - no `initial=`: `test_new_form_starts_on_medium` and `test_list_page_has_a_priority_box`
+     failed. The CUJ test failed too, because the browser sent High and the row said
+     `High priority`.
+   - `required=True`: `test_missing_or_empty_priority_is_medium`,
+     `test_editing_without_priority_makes_it_medium`,
+     `test_title_only_post_still_goes_back_to_the_list`, and 6 older tests that post only a title
+     (`test_add_a_todo`, the due-date tests, `test_title_is_trimmed`, `test_add_keeps_the_filter`).
+   - no `{% if %}`: `test_high_label_is_shown_and_medium_has_none` (a Medium label appeared).
+   - no `|lower`: `test_high_label_is_shown_and_medium_has_none` and `test_low_label_is_shown`.
+   Each bug was put back, and the files were compared with the good copies.
+7. **Old data.** A database was moved back to `0002`, two to-dos were added with plain SQL, and
+   then `migrate` ran `0003_todo_priority`. Both old to-dos have `priority = 2` (Medium), and
+   nothing else changed.
+8. **Steps 7 and 8 (the admin and the page, by hand in a browser)** were not done by the builder
+   agent. The tests check the form, the labels and the redirects. The admin's `list_display` and
+   `list_filter` are only configuration, and `make check` runs Django's own checks on them.
