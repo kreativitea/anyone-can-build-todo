@@ -44,10 +44,195 @@ def list_footer(count_text, completed_ids=(), query=""):
     return f'<div class="list-footer"><p class="count">{count_text}</p>{form}</div>'
 
 
+def page_path(response):
+    """The address of the page in `response`, with its query, like "/?show=active".
+
+    After `follow=True` this is the page the browser ended on.
+    """
+    query = response.request.get("QUERY_STRING", "")
+    return response.request["PATH_INFO"] + (f"?{query}" if query else "")
+
+
+class PageButton:
+    """A button that sends its form: its text, and the name/value it adds."""
+
+    def __init__(self, text, name=None, value=""):
+        self.text = text
+        self.name = name
+        self.value = value
+
+    def __repr__(self):
+        return f"PageButton({self.text!r}, name={self.name!r}, value={self.value!r})"
+
+
+class PageForm:
+    """One form on the page: where it sends, and what it sends.
+
+    `fields` maps each name to the LIST of values a browser would send, in
+    order, because a name can repeat (like the "ids" of delete completed).
+    `buttons` are the buttons that send this form.
+    """
+
+    def __init__(self, method, action):
+        self.method = method
+        self.action = action
+        self.fields = {}
+        self.field_names = set()  # every field, also an unchecked checkbox
+        self.buttons = []
+
+    def add(self, name, value):
+        self.fields.setdefault(name, []).append(value)
+
+    def data(self, button=None, **typed):
+        """What a browser sends: the form's own fields, what a person typed,
+        and the name/value of the button that was pressed (if it has a name).
+
+        Typing into a field the form does not have is a mistake in the test or
+        the page, so it fails at once. A typed value may be a list.
+        """
+        missing = set(typed) - self.field_names
+        if missing:
+            raise AssertionError(f"the form has no field {sorted(missing)}")
+        data = {name: list(values) for name, values in self.fields.items()}
+        for name, value in typed.items():
+            data[name] = list(value) if isinstance(value, list | tuple) else [value]
+        if button is not None:
+            if button not in self.buttons:
+                raise AssertionError(f"{button!r} is not a button of this form")
+            if button.name:
+                data.setdefault(button.name, []).append(button.value)
+        return data
+
+
+def collapse(pieces):
+    """Text pieces joined with a space, with every run of spaces made one."""
+    return " ".join(" ".join(pieces).split())
+
+
+class PageForms(HTMLParser):
+    """Reads every form on the page, and what a browser would send from it.
+
+    The browser rules it follows: a repeated name keeps every value; a
+    <textarea> sends its text; a <select> sends the selected option, or the
+    FIRST option when none is selected; an unchecked checkbox or radio sends
+    nothing; a disabled field sends nothing; <input type="submit"> is a button;
+    a form with no action sends to the page's own address (`page_path`).
+    """
+
+    def __init__(self, html, page_path=""):
+        super().__init__()
+        self.page_path = page_path
+        self.forms = []
+        self._form = None
+        self._button = None  # the text pieces of the button we are in
+        self._textarea = None  # (name, text pieces)
+        self._select = None  # {"name", "multiple", "options": [...]}
+        self._option = None  # the option we are in
+        self.feed(html)
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag == "form":
+            method = (attrs.get("method") or "get").lower()
+            self._form = PageForm(method, attrs.get("action") or self.page_path)
+            self.forms.append(self._form)
+            return
+        if self._form is None:
+            return
+        name = attrs.get("name")
+        disabled = "disabled" in attrs
+        if tag == "input":
+            self._input(attrs, name, disabled)
+        elif tag == "button":
+            kind = (attrs.get("type") or "submit").lower()
+            if kind == "submit" and not disabled:
+                button = PageButton("", name, attrs.get("value", ""))
+                self._form.buttons.append(button)
+                self._button = []
+        elif tag == "textarea" and name and not disabled:
+            self._form.field_names.add(name)
+            self._textarea = (name, [])
+        elif tag == "select" and name and not disabled:
+            self._form.field_names.add(name)
+            self._select = {
+                "name": name,
+                "multiple": "multiple" in attrs,
+                "options": [],
+            }
+        elif tag == "option" and self._select is not None:
+            self._option = {
+                "value": attrs.get("value"),
+                "text": [],
+                "selected": "selected" in attrs,
+            }
+            self._select["options"].append(self._option)
+
+    def _input(self, attrs, name, disabled):
+        kind = (attrs.get("type") or "text").lower()
+        if kind == "submit":
+            if not disabled:
+                text = attrs.get("value") or "Submit"
+                self._form.buttons.append(PageButton(text, name, text))
+            return
+        if kind in ("button", "reset", "image", "file") or not name or disabled:
+            return
+        self._form.field_names.add(name)
+        if kind in ("checkbox", "radio"):
+            if "checked" in attrs:
+                self._form.add(name, attrs.get("value") or "on")
+            return
+        self._form.add(name, attrs.get("value") or "")
+
+    def handle_endtag(self, tag):
+        if tag == "form":
+            self._form = None
+        elif tag == "button" and self._button is not None:
+            self._form.buttons[-1].text = collapse(self._button)
+            self._button = None
+        elif tag == "textarea" and self._textarea is not None:
+            name, pieces = self._textarea
+            text = "".join(pieces)
+            # A browser drops one newline right after <textarea>.
+            text = text.removeprefix("\r\n") if text.startswith("\r\n") else text
+            self._form.add(name, text.removeprefix("\n"))
+            self._textarea = None
+        elif tag == "option":
+            self._option = None
+        elif tag == "select" and self._select is not None:
+            self._end_select()
+
+    def _end_select(self):
+        select, self._select, self._option = self._select, None, None
+        options = select["options"]
+        chosen = [option for option in options if option["selected"]]
+        if not select["multiple"]:
+            # One choice: the last one marked selected, else the first option.
+            chosen = chosen[-1:] or options[:1]
+        for option in chosen:
+            value = option["value"]
+            if value is None:
+                value = collapse(option["text"])
+            self._form.add(select["name"], value)
+
+    def handle_data(self, data):
+        if self._button is not None:
+            self._button.append(data)
+        elif self._textarea is not None:
+            self._textarea[1].append(data)
+        elif self._option is not None:
+            self._option["text"].append(data)
+
+
+def page_forms(response):
+    """Every form on the page in `response`, read like a browser reads it."""
+    return PageForms(response.content.decode(), page_path(response)).forms
+
+
 class PageParts(HTMLParser):
     """Reads the parts of the page the tests compare exactly.
 
-    `post_actions` is the `action` of every form with method="post".
+    `post_actions` is the `action` of every form with method="post", read by
+    `PageForms`, so a form with no action counts as the page's own address.
     `titles` is the title of every to-do shown, in order: the text of each
     <span class="title"> before any tag inside it (the due date is a <small>
     inside the span, and is not part of the title).
@@ -55,9 +240,13 @@ class PageParts(HTMLParser):
     that compares it to one name proves that no OTHER link is marked too.
     """
 
-    def __init__(self, html):
+    def __init__(self, html, page_path=""):
         super().__init__()
-        self.post_actions = []
+        self.post_actions = [
+            form.action
+            for form in PageForms(html, page_path).forms
+            if form.method == "post"
+        ]
         self.titles = []
         self.current_links = []
         self._collect = None  # the list that the next text goes into
@@ -67,8 +256,6 @@ class PageParts(HTMLParser):
         attrs = dict(attrs)
         # Text inside a tag within the title (like the due date) is not the title.
         self._collect = None
-        if tag == "form" and (attrs.get("method") or "").lower() == "post":
-            self.post_actions.append(attrs.get("action", ""))
         if tag == "span" and attrs.get("class") == "title":
             self.titles.append("")
             self._collect = self.titles
@@ -85,4 +272,5 @@ class PageParts(HTMLParser):
 
 
 def page_parts(response):
-    return PageParts(response.content.decode())
+    """The parts of the page in `response` that tests compare exactly."""
+    return PageParts(response.content.decode(), page_path(response))

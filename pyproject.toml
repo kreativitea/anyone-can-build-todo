@@ -12,7 +12,6 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "playwright>=1.63.0",
     "pre-commit>=4",
     "ruff>=0.12",
     "tblib>=3.2.2",

@@ -28,9 +28,9 @@ The **folder** a test is in decides its level. Nobody has to label a test by han
 
 | Level | Folder | How many | What it uses | Speed |
 |---|---|---|---|---|
-| **CUJ** (top) | `todos/tests/cuj/` | 1 | a real browser | seconds |
+| **CUJ** (top) | `todos/tests/cuj/` | 1 | Django's test client (a real browser until the "Later change" below) | milliseconds |
 | **Integration** (middle) | `todos/tests/integration/` | most | Django's test client | milliseconds |
-| **Unit** (bottom) | `todos/tests/unit/` | a few | only the model | milliseconds |
+| **Unit** (bottom) | `todos/tests/unit/` | a few | one piece alone (the model, later also the test helpers) | milliseconds |
 
 ```text
 todos/tests/
@@ -328,3 +328,36 @@ It did not happen again in 40 more runs. If it comes back, save the output and l
   `TEST_RUNNER` line, and the tests still run, without the summary.
 - **CI gets slower** by about a minute, because it downloads the browser each time. That is fine
   for now. We can cache it later if it becomes a problem.
+
+## Later change: the CUJ level uses the test client
+
+On the branch `test/cuj-client`, the CUJ level stopped using a real browser. The journey test now
+uses Django's **test client**, like the integration tests. Playwright is removed from the project,
+so `make setup` and CI no longer download a browser.
+
+Why:
+
+- **The browser test was flaky.** It failed about 1 run in 10, and we never found why.
+- **The owner decided:** no real-browser tests. Things only a browser shows (CSS, layout, focus)
+  are checked by eye, with a screenshot.
+
+The journey has the same steps as before. Each step reads the form from the page (its address, its
+fields and the CSRF token), posts it with CSRF checks on (`Client(enforce_csrf_checks=True)`),
+follows the redirect, and checks the to-do's row exactly (`html=True`). So it still proves that the
+page's own forms work. The helper `page_forms` in `todos/tests/integration/helpers.py` reads the
+forms, and sends what a browser would send:
+
+- a repeated name sends every value (like the ids of delete completed);
+- a `<textarea>` sends its text, and a `<select>` sends the selected option, or the first one;
+- an unchecked checkbox or radio, or a disabled field, sends nothing;
+- the pressed button sends its own name and value;
+- a form with no `action` posts to the page's own address.
+
+Unit tests in `todos/tests/unit/test_helpers.py` check these rules on small pieces of HTML.
+
+The browser journey also proved that the fields have the right accessible names (the names a
+screen reader reads: "New to-do", "Due date"). An integration test,
+`test_add_form_fields_have_accessible_names`, now checks those fields exactly.
+
+The three levels, the folders and the summary for each level stay the same. `make test-cuj` still
+runs only the CUJ level; it now takes milliseconds.

@@ -1,4 +1,3 @@
-import re
 from datetime import date
 
 from django.db import connection
@@ -10,6 +9,7 @@ from todos.models import Todo
 from todos.tests.integration.helpers import (
     delete_completed_form,
     list_footer,
+    page_forms,
     page_without_csrf,
 )
 
@@ -19,6 +19,22 @@ class TodoTests(TestCase):
         response = self.client.get(reverse("todo_list"))
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Nothing to do yet")
+
+    def test_add_form_fields_have_accessible_names(self):
+        # A screen reader reads these names. The old browser journey found the
+        # fields by them, so a test must still check them exactly.
+        page = page_without_csrf(self.client.get(reverse("todo_list")))
+        title = (
+            '<input type="text" name="title" aria-label="New to-do" '
+            'placeholder="What needs doing?" autofocus maxlength="200" required '
+            'id="id_title">'
+        )
+        due_date = (
+            '<label for="id_due_date">Due date (optional):</label>'
+            '<input type="date" name="due_date" id="id_due_date">'
+        )
+        self.assertInHTML(title, page, count=1)
+        self.assertInHTML(due_date, page, count=1)
 
     def test_add_a_todo(self):
         self.client.post(reverse("todo_add"), {"title": "Buy milk"})
@@ -290,16 +306,17 @@ class DeleteCompletedTests(TestCase):
         # Like a real browser: read the form from the page, then send it back.
         # This fails if the form has no {% csrf_token %}.
         client = Client(enforce_csrf_checks=True)
-        page = client.get(reverse("todo_list")).content.decode()
-        form = re.search(r'<form class="delete-completed".*?</form>', page, re.S)
-        self.assertIsNotNone(form, "the page has no delete-completed form")
-        token = re.search(r'name="csrfmiddlewaretoken" value="([^"]+)"', form[0])
-        self.assertIsNotNone(token, "the delete-completed form has no CSRF token")
-        ids = re.findall(r'name="ids" value="([^"]+)"', form[0])
-        response = client.post(
-            reverse("todo_delete_completed"),
-            {"csrfmiddlewaretoken": token[1], "ids": ids},
-        )
+        page = client.get(reverse("todo_list"))
+        [(form, button)] = [
+            (form, button)
+            for form in page_forms(page)
+            for button in form.buttons
+            if button.text == "Delete 2 completed to-dos"
+        ]
+        self.assertIn("csrfmiddlewaretoken", form.fields)
+        # Both ids are sent, not only the last one.
+        self.assertEqual(form.fields["ids"], [str(self.milk.pk), str(self.home.pk)])
+        response = client.post(form.action, form.data(button))
         self.assertEqual(response.status_code, 302)
         self.assertEqual(self.titles(), {"Read chapter 3"})
 
