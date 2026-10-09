@@ -1,7 +1,7 @@
 # Plan: a due date on each to-do
 
-Status: **approved, not started**. No code has changed yet. Do [the test-pyramid plan](test-pyramid.md)
-first: this plan puts its tests into the folders that plan makes.
+Status: **done**. See "What happened" at the end. It was built after [the test-pyramid
+plan](test-pyramid.md), and its tests are in the folders that plan made.
 
 This is the second version of the plan. The first version was checked by an adversarial review (a
 reviewer whose job is to find what is wrong). Every finding is fixed below.
@@ -264,3 +264,65 @@ Every test that exists before this change must also still pass — especially
 7. Run `uv run python manage.py makemigrations --check --dry-run`. It should say "No changes
    detected", which means no migration is missing.
 8. Run `make check`. Commit, including `todos/migrations/0002_todo_due_date.py`.
+
+## What happened
+
+The tests were written first and committed alone. Before the code changed, `make test` showed
+`Integration: 10 passed, 5 failed, 3 errors` and `Unit: 3 passed, 1 error`. Every new test failed
+for the reason in the tables above, and the two protecting tests passed. `make test-cuj` failed
+because Playwright could not find the "Due date" box. After the code: `Unit: 4 passed`,
+`Integration: 18 passed`, `CUJ: 1 passed`, and `makemigrations --check --dry-run` said "No changes
+detected". Django wrote `0002_todo_due_date.py`; nobody edited it.
+
+Differences from the plan:
+
+- **One helper for the page's data.** The orchestrator asked for this after the plan was approved.
+  `views.py` has a small function, `page_context(request, form)`, that returns what the page needs,
+  one key per line. It takes `request` but does not use it yet: the filter feature needs it next.
+  Both `todo_list` and the error path of `todo_add` use it. About 15 later features add a key to
+  the page, so each one now adds **one line in one place**, not two, and two branches are less
+  likely to change the same line. The behaviour does not change, so no test was added. AGENTS.md
+  says every key the list page needs goes in `page_context`.
+- **`test_no_due_date_shows_no_due_text` looks for the element, `class="due"`, not the text
+  `due `.** The page's CSS has the rule `li .due { ... }`, which contains `due ` too, so the plan's
+  check would fail for the wrong reason. (A first try, `>due `, depended on spaces in the template,
+  and the code review showed a bug that it missed.)
+- **The error list had a line under it.** Django draws errors as a `<ul class="errorlist">` with
+  `<li>` items, so the page's own `li` rule (padding and a bottom border) hit them. A rule
+  `.errorlist li { padding: 0; border: 0; }` stops that.
+- **On a narrow phone (375 px), the Add button goes to a third row.** The label, the date box and
+  the button need about 10 px more than the row has. Everything still fits on the screen, with no
+  sideways scrolling, so we left it. (In a flex row that wraps, a box moves to the next row before
+  it shrinks, so making the date box "shrink if needed" does not help.) At 800 px, the label, date
+  box and button share the second row, as planned.
+- The plan's optional admin step (step 6) was done: the admin list shows the due date as a column.
+- A small grey style for the date in the list (`li .due`) was added, so it reads as extra detail.
+- The visual check (step 5) used a screenshot of the page at 375 px and 800 px, with a bad date,
+  instead of `make run` by hand.
+
+### After the code review
+
+An adversarial code reviewer checked the branch. Its findings were fixed in new commits, without
+changing the earlier ones:
+
+- **Phone layout.** At 320 px, a long title was squeezed to one word per line, and the date broke
+  over two lines. The date is now a `<small class="due">` **inside** the title, on its own line
+  (`display: block`), and the title may break inside a very long word (`overflow-wrap: anywhere`).
+  Checked with a 320 px screenshot. Note for later features: the title's text now ends with the
+  date, so a test that matches the title text *exactly* must allow for it.
+- **Stronger tests.** The date in the tests and the CUJ is now **5 Oct**, a day with one digit, so
+  the wrong date format (`d`, which gives `05`) is caught. New tests: the error page still shows the
+  list; an empty title shows "This field is required."; a past date (1 Jan 2000) is allowed. The
+  over-200 test now also checks the error message. The date box is checked as a whole `<input>`.
+- **Each new test was shown failing against a deliberate bug** (put back afterwards): always
+  showing the date; the format `d M Y`; an empty list on the error page; deleting the title's
+  errors from the template; rejecting dates before 2020; a date box without `type="date"`.
+
+After the fixes: `Unit: 4 passed`, `Integration: 21 passed`, `CUJ: 1 passed`.
+
+## Risks
+
+- **The error page is shown at `/add/`.** When the form has errors, the browser's address bar shows
+  `/add/`. Reloading that page sends the form again (the browser asks first), and opening `/add/`
+  directly gives `405 Method Not Allowed`, because it accepts `POST` only. We accept this: it is the
+  standard Django way, and nothing is saved until the form is correct.
