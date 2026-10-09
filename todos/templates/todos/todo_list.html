@@ -7,12 +7,16 @@
   <link rel="icon" href="data:,">
   <style>
     body { font-family: system-ui, sans-serif; max-width: 32rem; margin: 2rem auto; padding: 0 1rem; }
-    form.add { display: flex; gap: 0.5rem; margin-bottom: 1.5rem; }
-    form.add input { flex: 1; padding: 0.5rem; font-size: 1rem; }
+    form.add { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-bottom: 1.5rem; }
+    form.add input[name=title] { flex: 1 1 100%; padding: 0.5rem; font-size: 1rem; }
+    form.add input[type=date] { padding: 0.4rem; font-size: 1rem; }
+    .errorlist { flex: 1 1 100%; margin: 0; padding: 0; list-style: none; color: #b00020; }
+    .errorlist li { padding: 0; border: 0; }
     ul { list-style: none; padding: 0; }
     li { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0; border-bottom: 1px solid #ddd; }
     li .title { flex: 1; }
     li.done .title { text-decoration: line-through; color: #666; }
+    li .due { color: #666; font-size: 0.9rem; }
     button { padding: 0.4rem 0.8rem; font-size: 0.9rem; cursor: pointer; }
   </style>
 </head>
@@ -21,7 +25,12 @@
 
   <form class="add" method="post" action="{% url 'todo_add' %}">
     {% csrf_token %}
-    <input name="title" aria-label="New to-do" placeholder="What needs doing?" maxlength="200" required autofocus>
+    {{ form.non_field_errors }}
+    {{ form.title.errors }}
+    {{ form.title }}
+    {{ form.due_date.errors }}
+    {{ form.due_date.label_tag }}
+    {{ form.due_date }}
     <button type="submit">Add</button>
   </form>
 
@@ -29,6 +38,7 @@
     {% for todo in todos %}
       <li class="{% if todo.done %}done{% endif %}">
         <span class="title">{{ todo.title }}</span>
+        {% if todo.due_date %}<span class="due">due {{ todo.due_date|date:"j M Y" }}</span>{% endif %}
         <form method="post" action="{% url 'todo_toggle' todo.pk %}">
           {% csrf_token %}
           <button type="submit">{% if todo.done %}Undo{% else %}Done{% endif %}</button>

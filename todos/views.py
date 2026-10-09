@@ -1,20 +1,29 @@
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
+from .forms import TodoForm
 from .models import Todo
 
 
+def page_context(form):
+    """What the list page needs. Both views use this, so a new key goes here once."""
+    return {
+        "todos": Todo.objects.all(),
+        "form": form,
+    }
+
+
 def todo_list(request):
-    todos = Todo.objects.all()
-    return render(request, "todos/todo_list.html", {"todos": todos})
+    return render(request, "todos/todo_list.html", page_context(TodoForm()))
 
 
 @require_POST
 def todo_add(request):
-    title = request.POST.get("title", "").strip()
-    if title:
-        Todo.objects.create(title=title)
-    return redirect("todo_list")
+    form = TodoForm(request.POST)
+    if form.is_valid():
+        form.save()
+        return redirect("todo_list")
+    return render(request, "todos/todo_list.html", page_context(form))
 
 
 @require_POST
