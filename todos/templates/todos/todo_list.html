@@ -61,7 +61,7 @@
 
   <div class="layout">
     <div class="main">
-      <form class="add" method="post" action="{% url 'todo_add' %}{{ list_query }}">
+      <form class="add" method="post" action="{% url 'todo_add' current_list.pk %}{{ list_query }}">
         {% csrf_token %}
         {{ form.non_field_errors }}
         {{ form.title.errors }}
@@ -83,7 +83,7 @@
         <div class="add-actions"><button type="submit">Add</button></div>
       </form>
 
-      <form class="search" role="search" method="get" action="{% url 'todo_list' %}">
+      <form class="search" role="search" method="get" action="{% url 'todo_list' current_list.pk %}">
         {% for name, value in search_keeps %}<input type="hidden" name="{{ name }}" value="{{ value }}">{% endfor %}
         <label for="search-q">Search to-dos</label>
         <input type="search" id="search-q" name="q" value="{{ q }}" maxlength="{{ search_box_maxlength }}">
@@ -130,7 +130,7 @@
         <div class="list-footer">
           <p class="count">{{ remaining_count }} item{{ remaining_count|pluralize }} left</p>
           {% if completed_ids %}
-            <form class="delete-completed" method="post" action="{% url 'todo_delete_completed' %}{{ list_query }}">
+            <form class="delete-completed" method="post" action="{% url 'todo_delete_completed' current_list.pk %}{{ list_query }}">
               {% csrf_token %}
               {% for pk in completed_ids %}<input type="hidden" name="ids" value="{{ pk }}">{% endfor %}
               <button type="submit">Delete {{ completed_ids|length }} completed to-do{{ completed_ids|length|pluralize }}</button>

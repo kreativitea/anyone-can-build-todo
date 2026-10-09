@@ -200,14 +200,16 @@ class DoneAndUndoTests(LoggedInTestCase):
         response = self.client.post(
             done(self.bins, "?show=active"), {"done": "1"}, follow=True
         )
-        self.assertEqual(response.redirect_chain, [("/?show=active", 302)])
+        self.assertEqual(
+            response.redirect_chain, [(self.list_url(query="?show=active"), 302)]
+        )
         [copy] = self.open_todos()
         element = title_element(copy, "?show=active", repeat="Every week")
         self.assertContains(response, element, count=1, html=True)
 
     def test_delete_completed_keeps_the_next_copy(self):
         self.press(self.bins, "1")
-        self.client.post(reverse("todo_delete_completed"), {"ids": [self.bins.pk]})
+        self.client.post(self.delete_completed_url(), {"ids": [self.bins.pk]})
         [copy] = Todo.objects.all()
         self.assertFalse(copy.done)
         self.assertEqual(copy.due_date, NEXT_MONDAY)
@@ -223,6 +225,7 @@ class DoneAndUndoTests(LoggedInTestCase):
             "priority": str(todo.priority),
             "notes": todo.notes,
             "repeat": todo.repeat,
+            "todo_list": str(todo.todo_list_id),
             "_save": "Save",
         }
         # The steps inline (15): the admin page always sends its management
@@ -372,7 +375,7 @@ class MonthlyDayTests(LoggedInTestCase):
 
     def test_monthly_from_the_30th_never_drifts(self):
         self.client.post(
-            reverse("todo_add"),
+            self.add_url(),
             {"title": "Pay rent", "due_date": "2027-01-30", "repeat": "monthly"},
         )
         todo = Todo.objects.get()
@@ -387,7 +390,7 @@ class MonthlyDayTests(LoggedInTestCase):
 
     def test_editing_the_copys_date_moves_the_day(self):
         self.client.post(
-            reverse("todo_add"),
+            self.add_url(),
             {"title": "Pay rent", "due_date": "2027-01-31", "repeat": "monthly"},
         )
         copy = self.press_done(Todo.objects.get())
@@ -399,7 +402,7 @@ class MonthlyDayTests(LoggedInTestCase):
 
     def test_fixing_the_copys_title_keeps_the_day(self):
         self.client.post(
-            reverse("todo_add"),
+            self.add_url(),
             {"title": "Pay rnet", "due_date": "2027-01-31", "repeat": "monthly"},
         )
         copy = self.press_done(Todo.objects.get())
@@ -412,18 +415,18 @@ class MonthlyDayTests(LoggedInTestCase):
 class RepeatFormTests(LoggedInTestCase):
     def test_add_a_weekly_todo(self):
         self.client.post(
-            reverse("todo_add"),
+            self.add_url(),
             {"title": "Bins", "due_date": "2026-10-12", "repeat": "weekly"},
         )
         self.assertEqual(Todo.objects.get().repeat, "weekly")
 
     def test_add_without_repeat_does_not_repeat(self):
-        self.client.post(reverse("todo_add"), {"title": "Buy milk"})
+        self.client.post(self.add_url(), {"title": "Buy milk"})
         self.assertEqual(Todo.objects.get().repeat, "none")
 
     def test_repeat_without_due_date_is_rejected(self):
         response = self.client.post(
-            reverse("todo_add"), {"title": "Water plants", "repeat": "daily"}
+            self.add_url(), {"title": "Water plants", "repeat": "daily"}
         )
         self.assertEqual(response.status_code, 200)
         self.assertFalse(Todo.objects.exists())
@@ -434,20 +437,20 @@ class RepeatFormTests(LoggedInTestCase):
             page_without_csrf(response),
             count=1,
         )
-        [add] = [f for f in page_forms(response) if f.action == reverse("todo_add")]
+        [add] = [f for f in page_forms(response) if f.action == self.add_url()]
         self.assertEqual(add.fields["title"], ["Water plants"])
         self.assertEqual(add.fields["repeat"], ["daily"])
 
     def test_unknown_repeat_is_rejected(self):
         response = self.client.post(
-            reverse("todo_add"),
+            self.add_url(),
             {"title": "Bins", "due_date": "2026-10-12", "repeat": "yearly"},
         )
         self.assertEqual(response.status_code, 200)
         self.assertFalse(Todo.objects.exists())
 
     def test_list_page_has_a_repeats_box(self):
-        response = self.client.get(reverse("todo_list"))
+        response = self.client.get(self.list_url())
         self.assertContains(
             response, '<label for="id_repeat">Repeats:</label>', count=1, html=True
         )
@@ -465,7 +468,7 @@ class RepeatFormTests(LoggedInTestCase):
 
     def test_add_button_has_its_own_row(self):
         # So it does not look like a part of the Repeats box.
-        page = page_without_csrf(self.client.get(reverse("todo_list")))
+        page = page_without_csrf(self.client.get(self.list_url()))
         self.assertInHTML(
             '<div class="add-actions"><button type="submit">Add</button></div>',
             page,
@@ -475,7 +478,7 @@ class RepeatFormTests(LoggedInTestCase):
     def test_done_and_undo_buttons_send_the_wanted_state(self):
         milk = self.make_todo(title="Buy milk")
         home = self.make_todo(title="Call home", done=True)
-        page = page_without_csrf(self.client.get(reverse("todo_list")))
+        page = page_without_csrf(self.client.get(self.list_url()))
         self.assertInHTML(toggle_form(milk), page, count=1)
         self.assertInHTML(toggle_form(home, done=True), page, count=1)
         self.assertIn('<input type="hidden" name="done" value="1">', toggle_form(milk))
@@ -485,14 +488,14 @@ class RepeatFormTests(LoggedInTestCase):
 
     def test_open_repeating_todo_shows_its_repeat(self):
         bins = self.make_todo(title="Bins", due_date=MONDAY, repeat="weekly")
-        response = self.client.get(reverse("todo_list"))
+        response = self.client.get(self.list_url())
         element = title_element(bins, repeat="Every week")
         self.assertIn('<span class="repeat">Every week</span>', element)
         self.assertContains(response, element, count=1, html=True)
 
     def test_completed_repeating_todo_does_not_show_repeat(self):
         bins = self.make_todo(title="Bins", due_date=MONDAY, repeat="weekly", done=True)
-        response = self.client.get(reverse("todo_list"))
+        response = self.client.get(self.list_url())
         # The whole title span of that row, exactly: no repeat span in it.
         self.assertContains(response, title_element(bins), count=1, html=True)
 
@@ -552,23 +555,26 @@ class RepeatPaneTests(LoggedInTestCase):
 
     def test_pane_shows_the_repeat(self):
         bins = self.make_todo(title="Bins", due_date=MONDAY, repeat="weekly")
-        response = self.client.get(f"/?selected={bins.pk}")
+        response = self.client.get(self.list_url(query=f"?selected={bins.pk}"))
         pane = pane_element(
             bins,
             due="12 Oct 2026",
             repeats="Every week",
             created=self.created(bins),
-            close_url="/",
+            close_url=self.list_url(),
         )
         self.assertIn("<dt>Repeats</dt><dd>Every week</dd>", pane)
         self.assertContains(response, pane, count=1, html=True)
 
     def test_pane_has_no_repeats_row_for_a_todo_that_does_not_repeat(self):
         milk = self.make_todo(title="Buy milk", due_date=MONDAY)
-        response = self.client.get(f"/?selected={milk.pk}")
+        response = self.client.get(self.list_url(query=f"?selected={milk.pk}"))
         # The whole pane, exactly: it has no Repeats row.
         pane = pane_element(
-            milk, due="12 Oct 2026", created=self.created(milk), close_url="/"
+            milk,
+            due="12 Oct 2026",
+            created=self.created(milk),
+            close_url=self.list_url(),
         )
         self.assertContains(response, pane, count=1, html=True)
 
@@ -576,14 +582,14 @@ class RepeatPaneTests(LoggedInTestCase):
         # The pane shows every field. The list hides the repeat of a completed
         # to-do (its next copy repeats now), but the field is still saved.
         bins = self.make_todo(title="Bins", due_date=MONDAY, repeat="weekly", done=True)
-        response = self.client.get(f"/?selected={bins.pk}")
+        response = self.client.get(self.list_url(query=f"?selected={bins.pk}"))
         pane = pane_element(
             bins,
             status="Completed",
             due="12 Oct 2026",
             repeats="Every week",
             created=self.created(bins),
-            close_url="/",
+            close_url=self.list_url(),
         )
         self.assertContains(response, pane, count=1, html=True)
 

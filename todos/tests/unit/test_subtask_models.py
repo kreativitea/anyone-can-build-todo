@@ -4,20 +4,21 @@ from django.test import TestCase
 from django.utils import timezone
 
 from todos.models import Subtask, Todo
-from todos.tests.integration.helpers import make_user
+from todos.tests.integration.helpers import first_list, make_user
 
 
 class SubtaskModelTests(TestCase):
     @classmethod
     def setUpTestData(cls):
         cls.user = make_user()
+        cls.todo_list = first_list(cls.user)
 
     def setUp(self):
-        self.cake = Todo.objects.create(owner=self.user, title="Bake a cake")
+        self.cake = Todo.objects.create(todo_list=self.todo_list, title="Bake a cake")
         Subtask.objects.create(todo=self.cake, title="Buy flour", done=True)
         Subtask.objects.create(todo=self.cake, title="Buy eggs")
         Subtask.objects.create(todo=self.cake, title="Bake")
-        self.shop = Todo.objects.create(owner=self.user, title="Shop")
+        self.shop = Todo.objects.create(todo_list=self.todo_list, title="Shop")
 
     def test_with_subtask_progress_counts_steps(self):
         todos = {t.title: t for t in Todo.objects.with_subtask_progress()}

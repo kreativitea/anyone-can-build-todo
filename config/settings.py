@@ -89,7 +89,7 @@ ROOT_URLCONF = "config.urls"
 
 # Accounts: where to send a person to log in, and where to go after.
 LOGIN_URL = "login"
-LOGIN_REDIRECT_URL = "todo_list"
+LOGIN_REDIRECT_URL = "home"
 LOGOUT_REDIRECT_URL = "login"
 
 TEMPLATES = [

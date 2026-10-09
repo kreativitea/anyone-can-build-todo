@@ -7,7 +7,7 @@ from pathlib import Path
 from django.test import SimpleTestCase, TestCase
 
 from todos.models import Todo
-from todos.tests.integration.helpers import make_user
+from todos.tests.integration.helpers import first_list, make_user
 
 
 class OwnerModelTests(TestCase):
@@ -15,29 +15,34 @@ class OwnerModelTests(TestCase):
     def setUpTestData(cls):
         cls.ana = make_user("ana")
         cls.ben = make_user("ben")
+        cls.anas_list = first_list(cls.ana)
+        cls.bens_list = first_list(cls.ben)
 
     def test_for_user_gives_only_their_todos(self):
-        milk = Todo.objects.create(owner=self.ana, title="Buy milk")
-        home = Todo.objects.create(owner=self.ana, title="Call home")
-        Todo.objects.create(owner=self.ben, title="Ben's secret")
+        milk = Todo.objects.create(todo_list=self.anas_list, title="Buy milk")
+        home = Todo.objects.create(todo_list=self.anas_list, title="Call home")
+        Todo.objects.create(todo_list=self.bens_list, title="Ben's secret")
         self.assertEqual(list(Todo.objects.for_user(self.ana)), [milk, home])
 
     def test_next_repeat_keeps_the_owner(self):
         bins = Todo.objects.create(
-            owner=self.ben, title="Bins", repeat="weekly", due_date=date(2026, 10, 12)
+            todo_list=self.bens_list,
+            title="Bins",
+            repeat="weekly",
+            due_date=date(2026, 10, 12),
         )
         self.assertEqual(bins.next_copy().owner, self.ben)
 
     def test_deleting_a_user_deletes_their_todos(self):
-        milk = Todo.objects.create(owner=self.ana, title="Buy milk")
-        Todo.objects.create(owner=self.ben, title="Ben's secret")
+        milk = Todo.objects.create(todo_list=self.anas_list, title="Buy milk")
+        Todo.objects.create(todo_list=self.bens_list, title="Ben's secret")
         self.ben.delete()
         self.assertEqual(list(Todo.objects.all()), [milk])
 
     # Defence in depth: the model's own UPDATE and DELETE also ask for the owner.
 
     def test_mark_edited_changes_only_a_row_of_the_same_owner(self):
-        milk = Todo.objects.create(owner=self.ana, title="Buy milk")
+        milk = Todo.objects.create(todo_list=self.anas_list, title="Buy milk")
         stale = Todo.objects.get(pk=milk.pk)
         stale.owner_id = self.ben.pk  # an object that does not match its row
         stale.mark_edited()
@@ -49,7 +54,10 @@ class OwnerModelTests(TestCase):
 
     def test_undo_never_deletes_a_copy_of_another_person(self):
         bins = Todo.objects.create(
-            owner=self.ana, title="Bins", repeat="weekly", due_date=date(2026, 10, 12)
+            todo_list=self.anas_list,
+            title="Bins",
+            repeat="weekly",
+            due_date=date(2026, 10, 12),
         )
         bins.set_done(True)
         bins.refresh_from_db()
@@ -100,6 +108,10 @@ ALLOWED = {
     ("todos/forms.py", "model = Subtask"),
     # A data migration runs once, on every row, before anyone is logged in.
     ("todos/data_migrations.py", "Todo.objects.filter(owner__isnull=True).delete()"),
+    (
+        "todos/data_migrations.py",
+        "Todo.objects.filter(todo_list__isnull=True).delete()",
+    ),
     # The admin: staff see every to-do on purpose.
     ("todos/admin.py", "model = Subtask"),
 }

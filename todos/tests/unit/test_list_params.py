@@ -39,6 +39,10 @@ class ListParamsTests(SimpleTestCase):
         self.assertEqual(list_query({"show": "active"}), "?show=active")
 
 
+# The list in the addresses below (lists, 13): the links are for /lists/1/.
+LIST_ID = 1
+
+
 def list_params_with_q(data):
     """A stub: list_params, plus a pretend search parameter `q`.
 
@@ -54,25 +58,33 @@ def list_params_with_q(data):
 class FilterLinksTests(SimpleTestCase):
     def test_filter_links_with_no_params(self):
         self.assertEqual(
-            filter_links({}),
+            filter_links({}, LIST_ID),
             [
-                {"label": "All", "url": "/", "current": True},
-                {"label": "Active", "url": "/?show=active", "current": False},
-                {"label": "Completed", "url": "/?show=completed", "current": False},
+                {"label": "All", "url": "/lists/1/", "current": True},
+                {"label": "Active", "url": "/lists/1/?show=active", "current": False},
+                {
+                    "label": "Completed",
+                    "url": "/lists/1/?show=completed",
+                    "current": False,
+                },
             ],
         )
 
     def test_filter_links_keep_other_params(self):
         with patch("todos.views.list_params", list_params_with_q):
-            links = filter_links({"show": "active", "q": "milk"})
+            links = filter_links({"show": "active", "q": "milk"}, LIST_ID)
         self.assertEqual(
             links,
             [
-                {"label": "All", "url": "/?q=milk", "current": False},
-                {"label": "Active", "url": "/?show=active&q=milk", "current": True},
+                {"label": "All", "url": "/lists/1/?q=milk", "current": False},
+                {
+                    "label": "Active",
+                    "url": "/lists/1/?show=active&q=milk",
+                    "current": True,
+                },
                 {
                     "label": "Completed",
-                    "url": "/?show=completed&q=milk",
+                    "url": "/lists/1/?show=completed&q=milk",
                     "current": False,
                 },
             ],
@@ -101,18 +113,23 @@ class SelectedTests(SimpleTestCase):
 
     def test_filter_links_keep_selected(self):
         urls = [
-            link["url"] for link in filter_links({"show": "active", "selected": "5"})
+            link["url"]
+            for link in filter_links({"show": "active", "selected": "5"}, LIST_ID)
         ]
         self.assertEqual(
             urls,
-            ["/?selected=5", "/?show=active&selected=5", "/?show=completed&selected=5"],
+            [
+                "/lists/1/?selected=5",
+                "/lists/1/?show=active&selected=5",
+                "/lists/1/?show=completed&selected=5",
+            ],
         )
 
     def test_select_base(self):
-        self.assertEqual(views.select_base({}), "/?selected=")
+        self.assertEqual(views.select_base({}, LIST_ID), "/lists/1/?selected=")
         self.assertEqual(
-            views.select_base({"show": "active", "selected": "5"}),
-            "/?show=active&selected=",
+            views.select_base({"show": "active", "selected": "5"}, LIST_ID),
+            "/lists/1/?show=active&selected=",
         )
 
     # Details pane: protect what already works.
@@ -268,38 +285,44 @@ class SortParamsTests(SimpleTestCase):
         from todos.views import sort_links
 
         self.assertEqual(
-            sort_links({"show": "active"}),
+            sort_links({"show": "active"}, LIST_ID),
             [
-                {"label": "Date added", "url": "/?show=active", "current": True},
+                {
+                    "label": "Date added",
+                    "url": "/lists/1/?show=active",
+                    "current": True,
+                },
                 {
                     "label": "Due date",
-                    "url": "/?show=active&sort=due",
+                    "url": "/lists/1/?show=active&sort=due",
                     "current": False,
                 },
                 {
                     "label": "Priority",
-                    "url": "/?show=active&sort=priority",
+                    "url": "/lists/1/?show=active&sort=priority",
                     "current": False,
                 },
                 {
                     "label": "Title",
-                    "url": "/?show=active&sort=title",
+                    "url": "/lists/1/?show=active&sort=title",
                     "current": False,
                 },
             ],
         )
         chosen = [
-            link["label"] for link in sort_links({"sort": "title"}) if link["current"]
+            link["label"]
+            for link in sort_links({"sort": "title"}, LIST_ID)
+            if link["current"]
         ]
         self.assertEqual(chosen, ["Title"])
         # The selection stays, and stays last.
         self.assertEqual(
-            [link["url"] for link in sort_links({"selected": "5"})],
+            [link["url"] for link in sort_links({"selected": "5"}, LIST_ID)],
             [
-                "/?selected=5",
-                "/?sort=due&selected=5",
-                "/?sort=priority&selected=5",
-                "/?sort=title&selected=5",
+                "/lists/1/?selected=5",
+                "/lists/1/?sort=due&selected=5",
+                "/lists/1/?sort=priority&selected=5",
+                "/lists/1/?sort=title&selected=5",
             ],
         )
 

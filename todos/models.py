@@ -3,12 +3,66 @@ from django.core.exceptions import ValidationError
 from django.core.validators import MaxLengthValidator
 from django.db import models, transaction
 from django.db.models import Count, Q
+from django.db.models.functions import Lower
 from django.utils import timezone
 
 from . import repeat as rp
 
 # The longest notes a to-do may have. The form gets it from max_length.
 NOTES_LIMIT = 500
+
+# The name of the list a new person gets when they sign up.
+DEFAULT_LIST_NAME = "My to-dos"
+
+
+class TodoListQuerySet(models.QuerySet):
+    def for_user(self, user):
+        """The lists this person may see and use. Today: the lists they own.
+
+        Sharing (20) deletes this and puts visible_to / editable_by in its
+        place, so every caller is checked again.
+        """
+        return self.filter(owner=user)
+
+    def owned_by(self, user):
+        """The lists this person owns. For rename, delete, the name check and `/`."""
+        return self.filter(owner=user)
+
+    def create_default(self, user):
+        """The list a new person gets: "My to-dos"."""
+        return self.create(owner=user, name=DEFAULT_LIST_NAME)
+
+
+class TodoList(models.Model):
+    """A list of to-dos, like "Work" or "Shopping". Every to-do is in one list."""
+
+    # CASCADE: deleting a user deletes their lists (and so their to-dos).
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="todo_lists",
+    )
+    name = models.CharField(max_length=50)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    objects = TodoListQuerySet.as_manager()
+
+    class Meta:
+        # The order they were made in. The id breaks a tie.
+        ordering = ["created_at", "pk"]
+        constraints = [
+            # One person cannot have "Work" and "work"; two people can each
+            # have "Work". The form checks it first, with a friendlier message.
+            models.UniqueConstraint(
+                Lower("name"),
+                "owner",
+                name="todolist_unique_name_per_owner",
+                violation_error_message="You already have a list with this name.",
+            ),
+        ]
+
+    def __str__(self):
+        return self.name
 
 
 class TodoQuerySet(models.QuerySet):
@@ -53,8 +107,8 @@ class Todo(models.Model):
         WEEKLY = rp.WEEKLY, "Every week"
         MONTHLY = rp.MONTHLY, "Every month"
 
-    # The person who added it. Only they can see or change it. Never in a form:
-    # the view sets it. CASCADE: deleting a user deletes their to-dos.
+    # The owner of the to-do's list, always: save() sets it from the list.
+    # Never in a form. CASCADE: deleting a user deletes their to-dos.
     owner = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -101,6 +155,14 @@ class Todo(models.Model):
     # Undo never deletes an edited copy.
     edited = models.BooleanField(default=False, editable=False)
     created_at = models.DateTimeField(auto_now_add=True)
+    # The list this to-do is in. Required. CASCADE: deleting a list deletes
+    # its to-dos (owner decision).
+    todo_list = models.ForeignKey(
+        TodoList,
+        on_delete=models.CASCADE,
+        related_name="todos",
+        verbose_name="list",
+    )
 
     objects = TodoQuerySet.as_manager()
 
@@ -109,6 +171,12 @@ class Todo(models.Model):
 
     def __str__(self):
         return self.title
+
+    def save(self, *args, **kwargs):
+        # The owner always follows the list (CONVENTIONS, OWNERSHIP), so no
+        # view has to remember it, and the two can never be different.
+        self.owner_id = self.todo_list.owner_id
+        super().save(*args, **kwargs)
 
     @property
     def repeats(self):
@@ -131,6 +199,7 @@ class Todo(models.Model):
         day = self.repeat_day or start.day
         return {
             "owner_id": self.owner_id,
+            "todo_list_id": self.todo_list_id,
             "title": self.title,
             "notes": self.notes,
             "priority": self.priority,

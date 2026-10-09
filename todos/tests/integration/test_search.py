@@ -22,9 +22,10 @@ CODER = "\U0001f469‍\U0001f4bb"
 # The box's maxlength: the browser counts UTF-16 units, so it is 2 × 200.
 BOX = '<input type="search" id="search-q" name="q" value="{}" maxlength="400">'
 
-# The whole search form on `/`: no hidden input and no "Clear search" link.
+# The whole search form on a list page (`{list}`, its address): no hidden input
+# and no "Clear search" link.
 PLAIN_SEARCH_FORM = (
-    '<form class="search" role="search" method="get" action="/">'
+    '<form class="search" role="search" method="get" action="{list}">'
     '<label for="search-q">Search to-dos</label>'
     f"{BOX.format('')}"
     '<button type="submit">Search</button>'
@@ -55,7 +56,7 @@ class SearchTests(LoggedInTestCase):
 
     def search(self, q, **other):
         """Open the list with this search. The test client encodes the address."""
-        return self.client.get("/", {**other, "q": q})
+        return self.client.get(self.list_url(), {**other, "q": q})
 
     def assert_shown(self, response, shown, list_query="", hints=()):
         """Exactly the to-dos in `shown` are on the list, in order.
@@ -149,7 +150,7 @@ class SearchTests(LoggedInTestCase):
                 response, [self.buy, shopping, self.cow], query(q="milk"), [shopping]
             )
         with self.subTest("no search: never a hint"):
-            response = self.client.get("/")
+            response = self.client.get(self.list_url())
             self.assert_shown(response, [self.buy, self.call, shopping, self.cow])
 
     def test_no_match_message_shows_the_cleaned_word(self):
@@ -170,49 +171,62 @@ class SearchTests(LoggedInTestCase):
         ]
         for params, page_title in cases:
             with self.subTest(params=params):
-                response = self.client.get("/", params)
+                response = self.client.get(self.list_url(), params)
                 self.assertContains(response, page_title, count=1, html=True)
 
     def test_search_form_on_the_plain_list(self):
-        response = self.client.get("/")
-        self.assertContains(response, PLAIN_SEARCH_FORM, count=1, html=True)
+        response = self.client.get(self.list_url())
+        self.assertContains(
+            response, PLAIN_SEARCH_FORM.format(list=self.list_url()), count=1, html=True
+        )
 
     def test_search_form_with_a_filter_and_a_word(self):
-        response = self.client.get("/?show=active&q=milk")
+        response = self.client.get(self.list_url(query="?show=active&q=milk"))
         form = (
-            '<form class="search" role="search" method="get" action="/">'
+            f'<form class="search" role="search" method="get" action="{self.list_url()}">'
             '<input type="hidden" name="show" value="active">'
             '<label for="search-q">Search to-dos</label>'
             f"{search_box('milk')}"
             '<button type="submit">Search</button>'
-            '<a href="/?show=active">Clear search</a>'
+            f'<a href="{self.list_url()}?show=active">Clear search</a>'
             "</form>"
         )
         self.assertContains(response, form, count=1, html=True)
 
     def test_search_form_keeps_the_selected_todo(self):
         pk = self.buy.pk
-        response = self.client.get(f"/?q=milk&selected={pk}")
+        response = self.client.get(self.list_url(query=f"?q=milk&selected={pk}"))
         form = (
-            '<form class="search" role="search" method="get" action="/">'
+            f'<form class="search" role="search" method="get" action="{self.list_url()}">'
             f'<input type="hidden" name="selected" value="{pk}">'
             '<label for="search-q">Search to-dos</label>'
             f"{search_box('milk')}"
             '<button type="submit">Search</button>'
-            f'<a href="/?selected={pk}">Clear search</a>'
+            f'<a href="{self.list_url()}?selected={pk}">Clear search</a>'
             "</form>"
         )
         self.assertContains(response, form, count=1, html=True)
 
     def test_empty_search_is_the_same_as_no_search(self):
-        for url in ["/?q=", "/?q=%20%20", "/?q=%E3%80%80"]:
+        for url in [
+            self.list_url(query="?q="),
+            self.list_url(query="?q=%20%20"),
+            self.list_url(query="?q=%E3%80%80"),
+        ]:
             with self.subTest(url=url):
                 response = self.client.get(url)
                 # "Milk the cow" is completed, so it comes last.
                 self.assert_shown(response, [self.buy, self.call, self.cow])
-                self.assertContains(response, PLAIN_SEARCH_FORM, count=1, html=True)
                 self.assertContains(
-                    response, '<a href="/" aria-current="page">All</a>', html=True
+                    response,
+                    PLAIN_SEARCH_FORM.format(list=self.list_url()),
+                    count=1,
+                    html=True,
+                )
+                self.assertContains(
+                    response,
+                    f'<a href="{self.list_url()}" aria-current="page">All</a>',
+                    html=True,
                 )
 
     def test_search_word_is_escaped(self):
@@ -237,15 +251,15 @@ class SearchTests(LoggedInTestCase):
                 self.assertContains(response, message, count=1, html=True)
 
     def test_search_and_filter_together(self):
-        response = self.client.get("/?show=active&q=milk")
+        response = self.client.get(self.list_url(query="?show=active&q=milk"))
         self.assert_shown(response, [self.buy], query(show="active", q="milk"))
 
     def test_filter_links_keep_the_search(self):
-        response = self.client.get("/?q=milk")
+        response = self.client.get(self.list_url(query="?q=milk"))
         for link in [
-            '<a href="/?q=milk" aria-current="page">All</a>',
-            '<a href="/?show=active&amp;q=milk">Active</a>',
-            '<a href="/?show=completed&amp;q=milk">Completed</a>',
+            f'<a href="{self.list_url()}?q=milk" aria-current="page">All</a>',
+            f'<a href="{self.list_url()}?show=active&amp;q=milk">Active</a>',
+            f'<a href="{self.list_url()}?show=completed&amp;q=milk">Completed</a>',
         ]:
             with self.subTest(link=link):
                 self.assertContains(response, link, count=1, html=True)
@@ -254,14 +268,16 @@ class SearchTests(LoggedInTestCase):
         # On /?q=milk, "Milk the cow" (completed) is shown too, with its forms.
         for list_query in ["?show=active&q=milk", "?q=milk"]:
             with self.subTest(query=list_query):
-                actions = page_parts(self.client.get("/" + list_query)).post_actions
+                actions = page_parts(
+                    self.client.get(self.list_url() + list_query)
+                ).post_actions
                 self.assertGreaterEqual(len(actions), 3)
                 for action in actions:
                     path, mark, rest = action.partition("?")
                     self.assertEqual(mark + rest, list_query, action)
 
     def test_edit_link_keeps_the_search(self):
-        response = self.client.get("/?q=milk")
+        response = self.client.get(self.list_url(query="?q=milk"))
         link = (
             f'<a class="edit" href="/{self.buy.pk}/edit/?q=milk" '
             'aria-label="Edit Buy milk">Edit</a>'
@@ -275,7 +291,9 @@ class SearchTests(LoggedInTestCase):
             page_parts(response).post_actions, [f"/{self.buy.pk}/edit/{list_query}"]
         )
         self.assertContains(
-            response, '<a href="/?show=active&amp;q=milk">Cancel</a>', html=True
+            response,
+            f'<a href="{self.list_url()}?show=active&amp;q=milk">Cancel</a>',
+            html=True,
         )
 
     def test_actions_go_back_to_the_search(self):
@@ -288,33 +306,41 @@ class SearchTests(LoggedInTestCase):
         done = {"done": "1"}
         cases = [
             (
-                ("todo_add", [], {"q": "milk"}, {"title": "Milk again"}),
-                "/?q=milk",
+                (
+                    "todo_add",
+                    [self.todo_list.pk],
+                    {"q": "milk"},
+                    {"title": "Milk again"},
+                ),
+                self.list_url(query="?q=milk"),
             ),
-            ((*toggle, {"q": "milk"}, done), "/?q=milk"),
+            ((*toggle, {"q": "milk"}, done), self.list_url(query="?q=milk")),
             (
                 ("todo_delete", [extra.pk], {"show": "active", "q": "milk"}),
-                "/?show=active&q=milk",
+                self.list_url(query="?show=active&q=milk"),
             ),
-            ((*toggle, {"q": "牛乳"}, done), "/?q=%E7%89%9B%E4%B9%B3"),
-            ((*toggle, {"q": "buy milk"}, done), "/?q=buy+milk"),
+            (
+                (*toggle, {"q": "牛乳"}, done),
+                self.list_url(query="?q=%E7%89%9B%E4%B9%B3"),
+            ),
+            ((*toggle, {"q": "buy milk"}, done), self.list_url(query="?q=buy+milk")),
             # The `&` stays inside q: it never becomes a second parameter.
             (
                 (*toggle, {"q": "a&next=https://evil.example"}, done),
-                "/?q=a%26next%3Dhttps%3A%2F%2Fevil.example",
+                self.list_url(query="?q=a%26next%3Dhttps%3A%2F%2Fevil.example"),
             ),
             (
                 ("todo_edit", [self.buy.pk], {"q": "milk"}, {"title": "Buy oat milk"}),
-                "/?q=milk",
+                self.list_url(query="?q=milk"),
             ),
             (
                 (
                     "todo_delete_completed",
-                    [],
+                    [self.todo_list.pk],
                     {"q": "milk"},
                     {"ids": [self.cow.pk]},
                 ),
-                "/?q=milk",
+                self.list_url(query="?q=milk"),
             ),
         ]
         for args, location in cases:
@@ -325,7 +351,7 @@ class SearchTests(LoggedInTestCase):
 
     def test_add_error_keeps_the_search(self):
         response = self.client.post(
-            reverse("todo_add") + "?q=milk", {"title": "New", "due_date": "not-a-date"}
+            self.add_url() + "?q=milk", {"title": "New", "due_date": "not-a-date"}
         )
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Enter a valid date.")
@@ -337,16 +363,21 @@ class SearchTests(LoggedInTestCase):
     def test_search_that_hides_the_selected_todo_closes_the_pane(self):
         # Call home is selected, but the search for milk hides it: the page is
         # exactly the page without the selection.
-        hidden = f"/?q=milk&selected={self.call.pk}"
+        hidden = self.list_url(query=f"?q=milk&selected={self.call.pk}")
         response = self.client.get(hidden)
         self.assertEqual(page_parts(response).panes, [])
         self.assertEqual(page_parts(response).selected_titles, [])
         self.assertContains(
-            response, '<a href="/">Clear search</a>', count=1, html=True
+            response,
+            f"<a href='{self.list_url()}'>Clear search</a>",
+            count=1,
+            html=True,
         )
 
     def test_a_selected_result_opens_the_pane(self):
-        response = self.client.get(f"/?q=milk&selected={self.buy.pk}")
+        response = self.client.get(
+            self.list_url(query=f"?q=milk&selected={self.buy.pk}")
+        )
         parts = page_parts(response)
         self.assertEqual(parts.panes, ["Details"])
         self.assertEqual(parts.selected_titles, ["Buy milk"])
@@ -365,7 +396,7 @@ class SearchTests(LoggedInTestCase):
         # The hint comes from the same query as the list (an annotation).
         self.make_todo(title="Shopping", notes="milk and eggs")
         with CaptureQueriesContext(connection) as without:
-            self.client.get("/")
+            self.client.get(self.list_url())
         with CaptureQueriesContext(connection) as with_search:
             self.search("milk")
         self.assertEqual(len(with_search), len(without))

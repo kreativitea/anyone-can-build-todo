@@ -1,11 +1,11 @@
 """Notes on a to-do (feature 7): the add form, saving, and the details pane."""
 
-from django.urls import reverse
 from django.utils import timezone
 
 from todos.models import Todo
 from todos.tests.integration.helpers import (
     LoggedInTestCase,
+    list_path,
     page_parts,
     page_without_csrf,
     pane_element,
@@ -31,20 +31,20 @@ def notes_box(inside, *, is_open):
 
 
 def pane_for(todo, notes=None):
-    """The whole pane of `todo`, opened from "/": only fills in the keywords."""
+    """The whole pane of `todo`, opened from its list page: only fills in the keywords."""
     return pane_element(
         todo,
         status="Completed" if todo.done else "Active",
         due=show_date(todo.due_date) if todo.due_date else "No due date",
         priority=todo.get_priority_display(),
         created=show_date(timezone.localtime(todo.created_at).date()),
-        close_url="/",
+        close_url=list_path(todo.todo_list_id),
         notes=notes,
     )
 
 
 def selected_page(client, todo):
-    return client.get(f"/?selected={todo.pk}")
+    return client.get(list_path(todo.todo_list_id, f"?selected={todo.pk}"))
 
 
 class NotesTests(LoggedInTestCase):
@@ -52,12 +52,12 @@ class NotesTests(LoggedInTestCase):
 
     def test_add_a_todo_with_notes(self):
         self.client.post(
-            reverse("todo_add"), {"title": "Buy milk", "notes": "Low-fat\r\nOr soy"}
+            self.add_url(), {"title": "Buy milk", "notes": "Low-fat\r\nOr soy"}
         )
         self.assertEqual(Todo.objects.get().notes, "Low-fat\nOr soy")
 
     def test_add_a_todo_without_notes(self):
-        self.client.post(reverse("todo_add"), {"title": "Buy milk"})
+        self.client.post(self.add_url(), {"title": "Buy milk"})
         todo = Todo.objects.get()
         self.assertEqual(todo.title, "Buy milk")
         self.assertEqual(todo.notes, "")
@@ -65,7 +65,7 @@ class NotesTests(LoggedInTestCase):
     def test_notes_over_the_limit_are_not_added(self):
         notes = "a" * 501
         response = self.client.post(
-            reverse("todo_add"), {"title": "Buy milk", "notes": notes}
+            self.add_url(), {"title": "Buy milk", "notes": notes}
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(Todo.objects.count(), 0)
@@ -80,12 +80,12 @@ class NotesTests(LoggedInTestCase):
         )
 
     def test_list_page_has_a_notes_box(self):
-        response = self.client.get(reverse("todo_list"))
+        response = self.client.get(self.list_url())
         self.assertContains(response, notes_textarea(), html=True)
         self.assertContains(response, SUMMARY, html=True)
 
     def test_notes_box_is_closed_on_a_new_page(self):
-        response = self.client.get(reverse("todo_list"))
+        response = self.client.get(self.list_url())
         self.assertContains(
             response, notes_box(notes_textarea(), is_open=False), html=True
         )
@@ -103,7 +103,7 @@ class NotesTests(LoggedInTestCase):
         for name, notes, expected_box in cases:
             with self.subTest(name):
                 response = self.client.post(
-                    reverse("todo_add"),
+                    self.add_url(),
                     {"title": "Buy milk", "due_date": "not-a-date", "notes": notes},
                 )
                 self.assertEqual(response.status_code, 200)
@@ -136,9 +136,9 @@ class NotesTests(LoggedInTestCase):
 
     def test_notes_are_not_on_the_list(self):
         todo = self.make_todo(title="Buy milk", notes="Low-fat")
-        with_notes = page_without_csrf(self.client.get("/"))
+        with_notes = page_without_csrf(self.client.get(self.list_url()))
         Todo.objects.filter(pk=todo.pk).update(notes="")
-        without_notes = page_without_csrf(self.client.get("/"))
+        without_notes = page_without_csrf(self.client.get(self.list_url()))
         self.assertEqual(with_notes, without_notes)
 
     # Protects what already works: passes before the change too.

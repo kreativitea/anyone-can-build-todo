@@ -7,8 +7,6 @@ from django.urls import reverse
 from todos.models import Subtask, Todo
 from todos.tests.integration.helpers import (
     LoggedInTestCase,
-    delete_completed_form,
-    list_footer,
     page_forms,
     page_without_csrf,
 )
@@ -16,14 +14,14 @@ from todos.tests.integration.helpers import (
 
 class TodoTests(LoggedInTestCase):
     def test_list_page_loads(self):
-        response = self.client.get(reverse("todo_list"))
+        response = self.client.get(self.list_url())
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Nothing to do yet")
 
     def test_add_form_fields_have_accessible_names(self):
         # A screen reader reads these names. The old browser journey found the
         # fields by them, so a test must still check them exactly.
-        page = page_without_csrf(self.client.get(reverse("todo_list")))
+        page = page_without_csrf(self.client.get(self.list_url()))
         title = (
             '<input type="text" name="title" aria-label="New to-do" '
             'placeholder="What needs doing?" autofocus maxlength="200" required '
@@ -37,11 +35,11 @@ class TodoTests(LoggedInTestCase):
         self.assertInHTML(due_date, page, count=1)
 
     def test_add_a_todo(self):
-        self.client.post(reverse("todo_add"), {"title": "Buy milk"})
+        self.client.post(self.add_url(), {"title": "Buy milk"})
         self.assertEqual(Todo.objects.get().title, "Buy milk")
 
     def test_empty_title_is_not_added(self):
-        self.client.post(reverse("todo_add"), {"title": "   "})
+        self.client.post(self.add_url(), {"title": "   "})
         self.assertEqual(Todo.objects.count(), 0)
 
     def test_toggle_marks_done_and_back(self):
@@ -61,7 +59,7 @@ class TodoTests(LoggedInTestCase):
     def test_get_cannot_change_data(self):
         todo = self.make_todo(title="Call home")
         for url in [
-            reverse("todo_add") + "?title=Buy+milk",
+            self.add_url() + "?title=Buy+milk",
             reverse("todo_toggle", args=[todo.pk]),
             reverse("todo_delete", args=[todo.pk]),
         ]:
@@ -84,25 +82,25 @@ class TodoTests(LoggedInTestCase):
 
     def test_add_a_todo_with_a_due_date(self):
         self.client.post(
-            reverse("todo_add"), {"title": "Buy milk", "due_date": "2026-10-12"}
+            self.add_url(), {"title": "Buy milk", "due_date": "2026-10-12"}
         )
         self.assertEqual(Todo.objects.get().due_date, date(2026, 10, 12))
 
     def test_add_a_todo_without_a_due_date(self):
-        self.client.post(reverse("todo_add"), {"title": "Buy milk"})
+        self.client.post(self.add_url(), {"title": "Buy milk"})
         todo = Todo.objects.get()
         self.assertEqual(todo.title, "Buy milk")
         self.assertIsNone(todo.due_date)
 
     def test_bad_due_date_is_not_added(self):
         self.client.post(
-            reverse("todo_add"), {"title": "Buy milk", "due_date": "not-a-date"}
+            self.add_url(), {"title": "Buy milk", "due_date": "not-a-date"}
         )
         self.assertEqual(Todo.objects.count(), 0)
 
     def test_bad_due_date_shows_an_error_and_keeps_the_title(self):
         response = self.client.post(
-            reverse("todo_add"), {"title": "Buy milk", "due_date": "not-a-date"}
+            self.add_url(), {"title": "Buy milk", "due_date": "not-a-date"}
         )
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Enter a valid date.")
@@ -110,38 +108,38 @@ class TodoTests(LoggedInTestCase):
 
     def test_us_style_date_is_not_accepted(self):
         self.client.post(
-            reverse("todo_add"), {"title": "Buy milk", "due_date": "12/10/2026"}
+            self.add_url(), {"title": "Buy milk", "due_date": "12/10/2026"}
         )
         self.assertEqual(Todo.objects.count(), 0)
 
     def test_title_over_200_chars_is_not_added(self):
-        response = self.client.post(reverse("todo_add"), {"title": "a" * 201})
+        response = self.client.post(self.add_url(), {"title": "a" * 201})
         self.assertEqual(Todo.objects.count(), 0)
         self.assertContains(
             response, "Ensure this value has at most 200 characters (it has 201)."
         )
 
     def test_empty_title_shows_an_error(self):
-        response = self.client.post(reverse("todo_add"), {"title": ""})
+        response = self.client.post(self.add_url(), {"title": ""})
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "This field is required.")
 
     def test_error_page_still_shows_the_list(self):
         self.make_todo(title="Call home")
         response = self.client.post(
-            reverse("todo_add"), {"title": "Buy milk", "due_date": "not-a-date"}
+            self.add_url(), {"title": "Buy milk", "due_date": "not-a-date"}
         )
         self.assertContains(response, "Call home")
         self.assertTrue(response.context["form"].errors)
 
     def test_past_due_date_is_allowed(self):
         self.client.post(
-            reverse("todo_add"), {"title": "Buy milk", "due_date": "2000-01-01"}
+            self.add_url(), {"title": "Buy milk", "due_date": "2000-01-01"}
         )
         self.assertEqual(Todo.objects.get().due_date, date(2000, 1, 1))
 
     def test_list_page_has_a_date_box(self):
-        response = self.client.get(reverse("todo_list"))
+        response = self.client.get(self.list_url())
         self.assertContains(
             response,
             '<input type="date" name="due_date" id="id_due_date">',
@@ -151,18 +149,18 @@ class TodoTests(LoggedInTestCase):
     def test_due_date_is_shown_on_the_list(self):
         # A day with one digit: "5 Oct", not "05 Oct".
         self.make_todo(title="Buy milk", due_date=date(2026, 10, 5))
-        response = self.client.get(reverse("todo_list"))
+        response = self.client.get(self.list_url())
         self.assertContains(response, "due 5 Oct 2026")
 
     # Due date: protect what already works.
 
     def test_title_is_trimmed(self):
-        self.client.post(reverse("todo_add"), {"title": "  Buy milk  "})
+        self.client.post(self.add_url(), {"title": "  Buy milk  "})
         self.assertEqual(Todo.objects.get().title, "Buy milk")
 
     def test_no_due_date_shows_no_due_text(self):
         self.make_todo(title="Buy milk")
-        response = self.client.get(reverse("todo_list"))
+        response = self.client.get(self.list_url())
         self.assertNotContains(response, 'class="due"')
 
 
@@ -175,7 +173,7 @@ class CountTests(LoggedInTestCase):
         A completed to-do also puts the delete-completed button in the footer,
         so `completed` names them.
         """
-        footer = list_footer(text, [todo.pk for todo in completed])
+        footer = self.list_footer(text, [todo.pk for todo in completed])
         self.assertInHTML(footer, page_without_csrf(response), count=1)
 
     # Count: new behaviour.
@@ -184,29 +182,29 @@ class CountTests(LoggedInTestCase):
         self.make_todo(title="Buy milk")
         self.make_todo(title="Call home")
         read = self.make_todo(title="Read chapter 3", done=True)
-        response = self.client.get(reverse("todo_list"))
+        response = self.client.get(self.list_url())
         self.assertFooter(response, "2 items left", completed=[read])
 
     def test_count_comes_after_the_list(self):
         self.make_todo(title="Buy milk")
-        page = self.client.get(reverse("todo_list")).content.decode()
+        page = self.client.get(self.list_url()).content.decode()
         self.assertIn('class="count"', page)
         self.assertGreater(page.index('class="count"'), page.index("</ul>"))
 
     def test_count_says_item_for_one(self):
         self.make_todo(title="Buy milk")
-        response = self.client.get(reverse("todo_list"))
+        response = self.client.get(self.list_url())
         self.assertFooter(response, "1 item left")
 
     def test_count_says_items_for_zero(self):
         milk = self.make_todo(title="Buy milk", done=True)
-        response = self.client.get(reverse("todo_list"))
+        response = self.client.get(self.list_url())
         self.assertFooter(response, "0 items left", completed=[milk])
 
     def test_count_is_on_the_error_page(self):
         self.make_todo(title="Call home")
         response = self.client.post(
-            reverse("todo_add"), {"title": "Buy milk", "due_date": "not-a-date"}
+            self.add_url(), {"title": "Buy milk", "due_date": "not-a-date"}
         )
         self.assertEqual(response.status_code, 200)
         self.assertFooter(response, "1 item left")
@@ -223,7 +221,7 @@ class CountTests(LoggedInTestCase):
     def test_the_database_does_the_counting(self):
         self.make_todo(title="Buy milk")
         with CaptureQueriesContext(connection) as queries:
-            self.client.get(reverse("todo_list"))
+            self.client.get(self.list_url())
         counts = [
             q["sql"]
             for q in queries.captured_queries
@@ -234,7 +232,7 @@ class CountTests(LoggedInTestCase):
     # Count: protect what already works.
 
     def test_no_count_when_the_list_is_empty(self):
-        response = self.client.get(reverse("todo_list"))
+        response = self.client.get(self.list_url())
         self.assertContains(response, "Nothing to do yet")
         self.assertNotContains(response, "item left")
         self.assertNotContains(response, "items left")
@@ -250,9 +248,7 @@ class DeleteCompletedTests(LoggedInTestCase):
         self.read = self.make_todo(title="Read chapter 3")
 
     def post_ids(self, ids, client=None):
-        return (client or self.client).post(
-            reverse("todo_delete_completed"), {"ids": ids}
-        )
+        return (client or self.client).post(self.delete_completed_url(), {"ids": ids})
 
     def titles(self):
         return set(Todo.objects.values_list("title", flat=True))
@@ -261,7 +257,7 @@ class DeleteCompletedTests(LoggedInTestCase):
 
     def test_delete_completed_removes_the_completed_ones_seen(self):
         response = self.post_ids([self.milk.pk, self.home.pk])
-        self.assertRedirects(response, reverse("todo_list"))
+        self.assertRedirects(response, self.list_url())
         self.assertEqual(self.titles(), {"Read chapter 3"})
 
     def test_completed_after_the_page_loaded_survives(self):
@@ -333,7 +329,7 @@ class DeleteCompletedTests(LoggedInTestCase):
         self.assertEqual(sizes[0], sizes[1])
 
     def test_get_cannot_delete_completed(self):
-        response = self.client.get(reverse("todo_delete_completed"))
+        response = self.client.get(self.delete_completed_url())
         self.assertEqual(response.status_code, 405)
         self.assertEqual(Todo.objects.count(), 3)
 
@@ -348,7 +344,7 @@ class DeleteCompletedTests(LoggedInTestCase):
         # Like a real browser: read the form from the page, then send it back.
         # This fails if the form has no {% csrf_token %}.
         client = self.csrf_client()
-        page = client.get(reverse("todo_list"))
+        page = client.get(self.list_url())
         [(form, button)] = [
             (form, button)
             for form in page_forms(page)
@@ -363,21 +359,21 @@ class DeleteCompletedTests(LoggedInTestCase):
         self.assertEqual(self.titles(), {"Read chapter 3"})
 
     def test_delete_completed_form_on_the_list(self):
-        response = self.client.get(reverse("todo_list"))
-        form = delete_completed_form([self.milk.pk, self.home.pk])
+        response = self.client.get(self.list_url())
+        form = self.delete_completed_form([self.milk.pk, self.home.pk])
         self.assertInHTML(form, page_without_csrf(response), count=1)
 
     def test_delete_completed_form_is_in_the_list_footer(self):
         # The footer under the list is a <div>, not a <footer>: a <footer> in
         # <body> is announced to screen readers as the footer of the page.
-        response = self.client.get(reverse("todo_list"))
-        footer = list_footer("1 item left", [self.milk.pk, self.home.pk])
+        response = self.client.get(self.list_url())
+        footer = self.list_footer("1 item left", [self.milk.pk, self.home.pk])
         self.assertInHTML(footer, page_without_csrf(response), count=1)
 
     def test_delete_completed_button_says_one_to_do(self):
         self.home.delete()
-        response = self.client.get(reverse("todo_list"))
-        form = delete_completed_form([self.milk.pk])
+        response = self.client.get(self.list_url())
+        form = self.delete_completed_form([self.milk.pk])
         self.assertIn("Delete 1 completed to-do</button>", form)
         self.assertInHTML(form, page_without_csrf(response), count=1)
 
@@ -386,7 +382,10 @@ class DeleteCompletedTests(LoggedInTestCase):
         # is deleted. So the page offers the oldest 500; the next click
         # deletes the rest.
         Todo.objects.bulk_create(
-            Todo(title=f"Done {n}", done=True, owner=self.user) for n in range(499)
+            Todo(
+                title=f"Done {n}", done=True, owner=self.user, todo_list=self.todo_list
+            )
+            for n in range(499)
         )
         oldest_first = list(
             Todo.objects.filter(done=True)
@@ -396,22 +395,22 @@ class DeleteCompletedTests(LoggedInTestCase):
         self.assertEqual(len(oldest_first), 501)
         self.assertEqual(oldest_first[0], self.milk.pk)
 
-        response = self.client.get(reverse("todo_list"))
-        footer = list_footer("1 item left", oldest_first[:500])
+        response = self.client.get(self.list_url())
+        footer = self.list_footer("1 item left", oldest_first[:500])
         self.assertInHTML(footer, page_without_csrf(response), count=1)
 
         response = self.post_ids(oldest_first[:500], client=self.client)
         self.assertEqual(response.status_code, 302)
-        response = self.client.get(reverse("todo_list"))
-        footer = list_footer("1 item left", oldest_first[500:])
+        response = self.client.get(self.list_url())
+        footer = self.list_footer("1 item left", oldest_first[500:])
         self.assertInHTML(footer, page_without_csrf(response), count=1)
 
     # Delete completed: protect what already works.
 
     def test_no_delete_completed_form_when_nothing_is_completed(self):
         Todo.objects.filter(done=True).delete()
-        response = self.client.get(reverse("todo_list"))
+        response = self.client.get(self.list_url())
         # The whole footer, exactly: the count, and no form.
         self.assertInHTML(
-            list_footer("1 item left"), page_without_csrf(response), count=1
+            self.list_footer("1 item left"), page_without_csrf(response), count=1
         )

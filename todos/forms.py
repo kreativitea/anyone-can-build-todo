@@ -1,6 +1,6 @@
 from django import forms
 
-from .models import Subtask, Todo
+from .models import Subtask, Todo, TodoList
 
 
 class NotesField(forms.CharField):
@@ -105,15 +105,32 @@ class SubtaskForm(forms.ModelForm):
 
 
 class TodoEditForm(TodoForm):
-    """The add form, for a to-do that already exists. Every field of TodoForm is here too.
+    """The add form, for a to-do that already exists. Every field of TodoForm is here too,
+    and the list it is in (to move it).
 
     On this page every box has a visible label, so the hidden names and hints go.
+    `user` is keyword-only: forgetting it is an error at once.
     """
 
-    def __init__(self, *args, **kwargs):
+    class Meta(TodoForm.Meta):
+        fields = TodoForm.Meta.fields + ["todo_list"]
+
+    def __init__(self, *args, user, **kwargs):
         super().__init__(*args, **kwargs)
+        # Only this person's lists: the box shows only these, and any other id
+        # that is posted is refused ("Select a valid choice").
+        self.fields["todo_list"].queryset = TodoList.objects.for_user(user)
+        # A to-do is always in a list: no "---------" choice.
+        self.fields["todo_list"].empty_label = None
+        # A browser always sends the box. A hand-made post without it keeps
+        # the to-do where it is, like a missing priority is Medium.
+        self.fields["todo_list"].required = False
         # self.fields is this form's own copy. Never change self.base_fields:
         # some of those field objects are shared with TodoForm (the add form).
         for field in self.fields.values():
             field.widget.attrs.pop("aria-label", None)
             field.widget.attrs.pop("placeholder", None)
+
+    def clean_todo_list(self):
+        """The chosen list, or (when the post has none) the list it is in now."""
+        return self.cleaned_data["todo_list"] or self.instance.todo_list

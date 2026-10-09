@@ -35,7 +35,7 @@ class PriorityTests(LoggedInTestCase):
     # New behaviour.
 
     def test_list_page_has_a_priority_box(self):
-        response = self.client.get(reverse("todo_list"))
+        response = self.client.get(self.list_url())
         self.assertContains(
             response, '<label for="id_priority">Priority:</label>', count=1, html=True
         )
@@ -43,14 +43,14 @@ class PriorityTests(LoggedInTestCase):
 
     def test_add_a_high_priority_todo(self):
         response = self.client.post(
-            reverse("todo_add"), {"title": "Buy milk", "priority": "3"}
+            self.add_url(), {"title": "Buy milk", "priority": "3"}
         )
-        self.assertRedirects(response, "/", fetch_redirect_response=False)
+        self.assertRedirects(response, self.list_url(), fetch_redirect_response=False)
         self.assertEqual(Todo.objects.get().priority, Todo.Priority.HIGH)
 
     def test_unknown_priority_shows_an_error_and_keeps_the_title(self):
         response = self.client.post(
-            reverse("todo_add"), {"title": "Buy milk", "priority": "9"}
+            self.add_url(), {"title": "Buy milk", "priority": "9"}
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(Todo.objects.count(), 0)
@@ -65,7 +65,7 @@ class PriorityTests(LoggedInTestCase):
     def test_high_label_is_shown_and_medium_has_none(self):
         home = self.make_todo(title="Call home", priority=Todo.Priority.HIGH)
         milk = self.make_todo(title="Buy milk", priority=Todo.Priority.MEDIUM)
-        response = self.client.get(reverse("todo_list"))
+        response = self.client.get(self.list_url())
         self.assertContains(response, HIGH_LABEL, count=1, html=True)
         self.assertContains(response, MEDIUM_LABEL, count=0, html=True)
         self.assertContains(response, LOW_LABEL, count=0, html=True)
@@ -81,14 +81,14 @@ class PriorityTests(LoggedInTestCase):
 
     def test_low_label_is_shown(self):
         read = self.make_todo(title="Read chapter 3", priority=Todo.Priority.LOW)
-        response = self.client.get(reverse("todo_list"))
+        response = self.client.get(self.list_url())
         self.assertContains(response, LOW_LABEL, count=1, html=True)
         self.assertIn(LOW_LABEL, title_element(read))
         self.assertContains(response, title_element(read), count=1, html=True)
 
     def test_error_page_keeps_the_chosen_priority(self):
         response = self.client.post(
-            reverse("todo_add"),
+            self.add_url(),
             {"title": "Buy milk", "due_date": "not-a-date", "priority": "1"},
         )
         self.assertEqual(response.status_code, 200)
@@ -109,6 +109,6 @@ class PriorityTests(LoggedInTestCase):
     # What already works, and must keep working.
 
     def test_title_only_post_still_goes_back_to_the_list(self):
-        response = self.client.post(reverse("todo_add"), {"title": "Buy milk"})
-        self.assertRedirects(response, "/", fetch_redirect_response=False)
+        response = self.client.post(self.add_url(), {"title": "Buy milk"})
+        self.assertRedirects(response, self.list_url(), fetch_redirect_response=False)
         self.assertEqual(Todo.objects.count(), 1)

@@ -21,6 +21,8 @@ from todos.tests.integration.helpers import (
     LoggedInTestCase,
     account_bar,
     count_elements,
+    first_list,
+    list_path,
     make_user,
     page_forms,
     page_without_csrf,
@@ -42,7 +44,8 @@ class VisitorTests(TestCase):
     @classmethod
     def setUpTestData(cls):
         cls.ana = make_user("ana")
-        cls.milk = Todo.objects.create(owner=cls.ana, title="Buy milk")
+        cls.todo_list = first_list(cls.ana)
+        cls.milk = Todo.objects.create(todo_list=cls.todo_list, title="Buy milk")
         cls.flour = Subtask.objects.create(todo=cls.milk, title="Buy flour")
 
     def test_visitor_is_sent_to_log_in(self):
@@ -74,12 +77,13 @@ class VisitorTests(TestCase):
         # After log-in the browser would GET the address; a POST-only
         # address would answer 405. So every POST goes back to the list.
         pk, step = self.milk.pk, self.flour.pk
+        list_id = self.todo_list.pk
         posts = [
-            ("/add/", {"title": "Hacked"}),
+            (f"/lists/{list_id}/add/", {"title": "Hacked"}),
             (f"/{pk}/toggle/", {"done": "1"}),
             (f"/{pk}/edit/", {"title": "Hacked"}),
             (f"/{pk}/delete/", {}),
-            ("/delete-completed/", {"ids": [str(pk)]}),
+            (f"/lists/{list_id}/delete-completed/", {"ids": [str(pk)]}),
             (f"/{pk}/subtasks/add/", {"title": "Hacked"}),
             (f"/{pk}/subtasks/{step}/done/", {"done": "1"}),
             (f"/{pk}/subtasks/{step}/delete/", {}),
@@ -162,7 +166,9 @@ class SignUpTests(TestCase):
         self.assertRedirects(response, "/", fetch_redirect_response=False)
         ben = User.objects.get(username="ben")
         self.assertTrue(ben.check_password(TEST_PASSWORD))
-        self.assertEqual(self.client.get("/").status_code, 200)
+        self.assertEqual(
+            self.client.get(list_path(first_list(ben).pk)).status_code, 200
+        )
         self.assertEqual(self.client.session["_auth_user_id"], str(ben.pk))
 
     def test_signup_rejects_a_common_password(self):
@@ -257,7 +263,7 @@ class LogInTests(TestCase):
 
 class AccountBarTests(LoggedInTestCase):
     def test_account_bar_shows_who_is_logged_in(self):
-        for url in ["/", f"/{self.make_todo(title='Buy milk').pk}/edit/"]:
+        for url in [self.list_url(), f"/{self.make_todo(title='Buy milk').pk}/edit/"]:
             with self.subTest(url=url):
                 response = self.client.get(url)
                 self.assertInHTML(
@@ -267,7 +273,7 @@ class AccountBarTests(LoggedInTestCase):
     def test_log_out_button_works_with_csrf_checks_on(self):
         # Like a real browser: the Log out form sends its own CSRF token.
         client = self.csrf_client()
-        page = client.get("/")
+        page = client.get(self.list_url())
         forms = [f for f in page_forms(page) if f.action == LOGOUT_URL]
         self.assertEqual(len(forms), 1, "want one Log out form")
         [form] = forms

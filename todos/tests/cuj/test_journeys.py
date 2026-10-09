@@ -6,6 +6,7 @@ it like a browser would, follows the redirect, and checks the page exactly. So
 a journey proves that the page's own forms really work.
 """
 
+from django.contrib.auth import get_user_model
 from django.test import Client, TestCase
 from django.urls import reverse
 from django.utils.html import escape
@@ -15,7 +16,9 @@ from todos.tests.integration.helpers import (
     LOGIN_URL,
     TEST_PASSWORD,
     account_bar,
+    first_list,
     link_href,
+    list_path,
     log_in,
     make_user,
     page_forms,
@@ -27,6 +30,9 @@ from todos.tests.integration.helpers import (
 
 EMPTY = "<li>Nothing to do yet. Add something above.</li>"
 HIGH_LABEL = '<span class="priority high">High priority</span>'
+
+# Log in and sign up land on "/", which opens the person's first list.
+HOME = "/"
 
 
 def todo_row(todo, done=False, repeat="", progress=""):
@@ -61,7 +67,8 @@ class JourneyTests(TestCase):
         The name is what a screen reader says: the aria-label, else the text.
         The address and the fields come from the button's form on the page,
         and the button's own name/value is sent too. `lands_on` is the page
-        the redirect must go to; the list by default.
+        the redirect must go to; the person's list by default. HOME: through
+        "/" to the person's first list.
         """
         pairs = [
             (form, button)
@@ -78,9 +85,17 @@ class JourneyTests(TestCase):
         response = self.client.post(
             form.action, form.data(button, **typed), follow=True
         )
-        landing = lands_on or reverse("todo_list")
-        self.assertEqual(response.redirect_chain, [(landing, 302)])
+        if lands_on == HOME:
+            chain = [(HOME, 302), (self.my_list_url(), 302)]
+        else:
+            chain = [(lands_on or self.my_list_url(), 302)]
+        self.assertEqual(response.redirect_chain, chain)
         return response
+
+    def my_list_url(self):
+        """The address of the logged-in person's first list."""
+        user = get_user_model().objects.get(pk=self.client.session["_auth_user_id"])
+        return list_path(first_list(user).pk)
 
     def assert_list(self, page, row):
         self.assertInHTML(row, page_without_csrf(page), count=1)
@@ -227,7 +242,9 @@ class JourneyTests(TestCase):
         page = self.press(page, "Log out", lands_on=LOGIN_URL)
 
         # Ana logs in again: her "Buy milk" is still there.
-        page = self.press(page, "Log in", username="ana", password=TEST_PASSWORD)
+        page = self.press(
+            page, "Log in", lands_on=HOME, username="ana", password=TEST_PASSWORD
+        )
         self.assertEqual(page_parts(page).titles, ["Buy milk"])
         self.assertInHTML(account_bar("ana"), page_without_csrf(page), count=1)
 
@@ -238,6 +255,7 @@ class JourneyTests(TestCase):
         return self.press(
             page,
             "Sign up",
+            lands_on=HOME,
             username=username,
             password1=TEST_PASSWORD,
             password2=TEST_PASSWORD,

@@ -19,7 +19,7 @@ class LoginRequired(LoginRequiredMiddleware):
         if request.method in ("GET", "HEAD"):
             return super().handle_no_permission(request, view_func)
         return redirect_to_login(
-            reverse("todo_list"),
+            reverse("home"),
             resolve_url(self.get_login_url(view_func)),
             self.get_redirect_field_name(view_func),
         )

@@ -78,7 +78,7 @@ class EditTests(LoggedInTestCase):
             self.edit_url(), {"title": "Buy oat milk", "due_date": "2026-10-20"}
         )
         self.assertEqual(response.status_code, 302)
-        self.assertEqual(response["Location"], "/")
+        self.assertEqual(response["Location"], self.list_url())
         self.todo.refresh_from_db()
         self.assertEqual(self.todo.title, "Buy oat milk")
         self.assertEqual(self.todo.due_date, date(2026, 10, 20))
@@ -165,7 +165,7 @@ class EditTests(LoggedInTestCase):
 
     def test_list_has_an_edit_link_for_each_todo(self):
         tricky = self.make_todo(title='Say "hi" <b>')
-        response = self.client.get(reverse("todo_list"))
+        response = self.client.get(self.list_url())
         self.assertContains(response, edit_link(self.todo, "Buy milk"), html=True)
         self.assertContains(
             response,
@@ -174,7 +174,7 @@ class EditTests(LoggedInTestCase):
         )
 
     def test_edit_link_keeps_the_filter(self):
-        response = self.client.get(reverse("todo_list") + "?show=active")
+        response = self.client.get(self.list_url() + "?show=active")
         self.assertContains(
             response, edit_link(self.todo, "Buy milk", "?show=active"), html=True
         )
@@ -187,7 +187,9 @@ class EditTests(LoggedInTestCase):
                     page_parts(response).post_actions, [f"/{self.todo.pk}/edit/{query}"]
                 )
                 self.assertContains(
-                    response, f'<a href="/{query}">Cancel</a>', html=True
+                    response,
+                    f'<a href="{self.list_url(query=query)}">Cancel</a>',
+                    html=True,
                 )
 
     def test_save_keeps_the_filter(self):
@@ -195,7 +197,9 @@ class EditTests(LoggedInTestCase):
         with self.subTest("a good post"):
             response = self.client.post(url, {"title": "Buy oat milk"})
             self.assertEqual(response.status_code, 302)
-            self.assertEqual(response["Location"], "/?show=completed")
+            self.assertEqual(
+                response["Location"], self.list_url(query="?show=completed")
+            )
         with self.subTest("a post with an empty title"):
             response = self.client.post(url, {"title": ""})
             self.assertEqual(response.status_code, 200)
@@ -212,11 +216,13 @@ class EditTests(LoggedInTestCase):
             self.assertEqual(
                 page_parts(response).post_actions, [f"/{self.todo.pk}/edit/"]
             )
-            self.assertContains(response, '<a href="/">Cancel</a>', html=True)
+            self.assertContains(
+                response, f"<a href='{self.list_url()}'>Cancel</a>", html=True
+            )
         with self.subTest("a good post"):
             response = self.client.post(url, {"title": "Buy oat milk"})
             self.assertEqual(response.status_code, 302)
-            self.assertEqual(response["Location"], "/")
+            self.assertEqual(response["Location"], self.list_url())
 
     def test_todo_deleted_while_saving_is_not_brought_back(self):
         # Someone deletes the to-do after the form was checked and before it is
@@ -236,7 +242,7 @@ class EditTests(LoggedInTestCase):
     # Protecting: these pass before the change, and must still pass after.
 
     def test_every_page_has_the_shared_head(self):
-        for name, url in [("list", reverse("todo_list")), ("edit", self.edit_url())]:
+        for name, url in [("list", self.list_url()), ("edit", self.edit_url())]:
             with self.subTest(page=name):
                 response = self.client.get(url)
                 self.assertContains(response, '<meta charset="utf-8">', html=True)
@@ -275,7 +281,7 @@ class EditTests(LoggedInTestCase):
         self.assertEqual(self.todo.title, "Buy oat milk")
 
     def test_list_page_keeps_its_title_and_add_form(self):
-        response = self.client.get(reverse("todo_list"))
+        response = self.client.get(self.list_url())
         self.assertContains(response, "<title>To-do list</title>", html=True)
         self.assertContains(response, "<h1>To-do list</h1>", html=True)
         self.assertContains(
@@ -407,19 +413,19 @@ class EditLinkPlaceTests(LoggedInTestCase):
             '<button type="submit">Delete</button></form>'
             "</li>"
         )
-        response = self.client.get(reverse("todo_list"))
+        response = self.client.get(self.list_url())
         self.assertInHTML(row, page_without_csrf(response), count=1)
 
     def test_pane_has_an_edit_link(self):
         pk = self.todo.pk
-        response = self.client.get(f"/?show=active&selected={pk}")
+        response = self.client.get(self.list_url(query=f"?show=active&selected={pk}"))
         pane = pane_element(
             self.todo,
             due="12 Oct 2026",
             priority="High",
             created=show_date(timezone.localtime(self.todo.created_at).date()),
             edit_url=f"/{pk}/edit/?show=active&selected={pk}",
-            close_url="/?show=active",
+            close_url=self.list_url(query="?show=active"),
         )
         self.assertContains(response, pane, count=1, html=True)
 
@@ -428,4 +434,6 @@ class EditLinkPlaceTests(LoggedInTestCase):
         url = reverse("todo_edit", args=[pk]) + f"?show=active&selected={pk}"
         response = self.client.post(url, {"title": "Buy oat milk", "priority": "3"})
         self.assertEqual(response.status_code, 302)
-        self.assertEqual(response["Location"], f"/?show=active&selected={pk}")
+        self.assertEqual(
+            response["Location"], self.list_url(query=f"?show=active&selected={pk}")
+        )
