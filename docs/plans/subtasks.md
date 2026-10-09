@@ -1,7 +1,7 @@
 # Plan: subtasks — small steps inside one to-do (feature 15)
 
-Status: **approved, in progress.** Built on `main` before sort (9) and repeating (19) merged. The
-parts that need repeating wait for the rebase. See "What happened".
+Status: **done.** Built, reviewed, and rebased on `main` with sort (9), completed-last and
+repeating (19). See "What happened".
 
 Owner answers: (1) **yes** — when a repeating to-do comes back, its steps are copied to the new
 copy, all not done; (2) **yes** — the Steps link on the edit page is enough to find the first step.
@@ -826,19 +826,60 @@ These changes close the gaps. Each new or changed test was first seen failing (l
   Headless Chrome cannot make a window narrower than about 500 pixels, so its "phone" picture is
   cut on the right, for the old list page too; the phone check is left for a real narrow window.
 
-### Waiting for the rebase on 9 and 19
+### The rebase on sort (9), completed-last and repeating (19)
 
-- `copy_subtasks_to()` (one `bulk_create`, every step not done) and its call in `set_done` right
-  after `copy.save()`.
-- **Owner decision (replaces the plan's "steps exactly the copied, untouched ones" comparison):**
-  adding, finishing / undoing, or deleting a step on a to-do sets that to-do's `edited=True`
-  (repeating, 19, adds the `edited` flag; Undo keeps an edited copy). So no `subtask_titles()`
-  comparison in `is_untouched_copy_of`; the step views set `edited` instead.
-- The four repeating tests in `integration/test_repeat.py`; the deliberate bug for "keeps a copy
-  whose steps changed" becomes "a step view that does not set `edited`".
-- The delete-completed test: start from 19's version (1 `SELECT`, 1 `UPDATE`, 1 `DELETE` on
-  `todos_todo`) and keep this branch's step checks; `count("UPDATE")` becomes 1.
-- `done=` on every to-do Done / Undo post in these tests (`test_steps_and_the_todo_are_separate`);
-  one `WANTED` table.
-- Test 16's address and `href` with `sort=due`; sort's `order_by` after `with_subtask_progress()`.
-- The migration: delete `0005_subtask.py` and run `makemigrations` again.
+`main` was `2a77c70`. What was done, and how:
+
+- **History made again.** During the rebase, a resolution in the first commit dropped four
+  delete-completed tests by mistake (a too-wide search pattern), and the third commit kept
+  conflict markers. Both were mended in later commits, but the steps between were broken. So the
+  branch was put together again on top of `main` as clean commits: the plan and the tests; the
+  code; the migration on its own; the repeating tests; the repeating code. The review's separate
+  commits are folded into the first two. (The old branch is kept locally as
+  `backup/subtasks-before-rewrite`.)
+- **The migration**: this branch's `0005_subtask.py` was deleted; `makemigrations todos -n
+  subtask` made `0006_subtask`, which depends on main's
+  `0005_todo_edited_todo_next_todo_todo_repeat_and_more`. Not edited by hand; its own commit.
+  Checked on a database at main's `0005` with three to-dos (one High with notes, a weekly one
+  completed with its next copy): `Applying todos.0006_subtask... OK`; every field (done, priority,
+  notes, repeat, next_todo, edited, due date) was the same after, each with 0 steps;
+  `makemigrations --check`: "No changes detected".
+- **One `WANTED`**: main's, in `views.py`; this branch's copy was deleted.
+- **`sort_todos`' `order_by` comes after `with_subtask_progress()`** in `page_context`: the counts
+  are added first, then filter, search and sort.
+- **`copy_subtasks_to(copy)`**: one `bulk_create`, only the titles, every step not done, called in
+  `set_done` right after `copy.save()`, inside its `transaction.atomic()`. `subtask_titles()` is
+  the list of titles it copies. That they are in the same transaction is read in the code; no
+  test can show it on SQLite.
+- **Owner decision (replaces "the steps are exactly the copied, untouched ones")**: adding, Done /
+  Undo on, or deleting a step sets that to-do's `edited=True` (`mark_edited`, one `UPDATE`, in
+  the same transaction as the step change). Main's Undo already keeps an `edited` copy, so
+  `set_done`'s Undo did not change; there is no `is_untouched_copy_of` and no title comparison. A
+  refused change (an empty step, `done=yes`) does not set it.
+- **Tests added**: in `integration/test_repeat.py`, `RepeatingStepsTests`:
+  `test_done_copies_the_steps_not_done`, `test_done_copies_all_steps_in_one_query` (the same
+  number of queries for 2 and 5 steps), `test_undo_deletes_a_copy_with_untouched_steps`,
+  `test_undo_keeps_a_copy_whose_steps_changed` (subTests: tick Floor, add Bath, delete Kitchen;
+  then Done on the old one again makes no third to-do), `test_done_on_a_todo_without_steps_copies_none`.
+  In `test_subtasks.py`: `test_step_changes_mark_the_todo_edited` and
+  `test_a_refused_step_change_does_not_mark_the_todo_edited`.
+- **Tests changed**: the delete-completed query test (now
+  `test_delete_completed_uses_a_fixed_number_of_queries`) has main's checks (1 `SELECT`, 1
+  `UPDATE "todos_todo" SET "next_todo_id"`, 1 `DELETE` on `todos_todo`) plus this branch's (1
+  `DELETE FROM "todos_subtask"`, no `SELECT` from it), for 2 and 5 ids;
+  `test_steps_and_the_todo_are_separate` posts `done=1`; test 16 opens
+  `/?show=active&q=cake&sort=due` and expects that `href`; `list_row` uses main's
+  `toggle_form`; the journey's `todo_row` takes both `repeat` and `progress`; `pane_element`
+  takes both `repeats` and `steps`. Main's `admin_save` helper in `test_repeat.py` now also sends
+  the steps inline's management form (and any steps), as the real admin page does: without it
+  the admin refused the save (200, not 302) in four repeating tests.
+- **Completed last in every sort**: no expected order in this branch's tests changed. Every test
+  that checks an order (the steps, oldest first; the list in the query-count test) has only open
+  to-dos, or orders steps, which sort does not touch.
+- **Red, then green** (`subtasks-rebase-before.txt`): before the code, 7 failures and 2 errors,
+  all in the new tests (no steps copied: empty lists and `DoesNotExist`; `edited` still False).
+  After: `make test` Integration 247, Unit 109; `make test-cuj` CUJ 5; `make check` passes.
+- **Deliberate bugs** (`subtasks-bugs3.txt`), each caught and put back: Done without
+  `copy_subtasks_to`; the copy keeps each step's `done`; steps saved one by one (11 != 14
+  queries); no `mark_edited` in add, in Done/Undo, or in delete; `mark_edited` before the form is
+  checked; delete completed in a loop (2 and 5 deletes, not 1).

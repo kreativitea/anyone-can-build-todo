@@ -428,9 +428,20 @@ def subtask_add(request, pk):
     form = SubtaskForm(request.POST)
     if form.is_valid():
         form.instance.todo = todo
-        form.save()
+        with transaction.atomic():
+            form.save()
+            mark_edited(todo.pk)
         return back_to_subtasks(request, pk)
     return subtask_page(request, pk, todo.title, form)
+
+
+def mark_edited(pk):
+    """A change to the steps is an edit of the to-do (owner decision).
+
+    So Undo on a repeating to-do never deletes a copy whose steps changed.
+    One UPDATE; it never touches the to-do's `done`.
+    """
+    Todo.objects.filter(pk=pk).update(edited=True)
 
 
 def get_subtask_or_404(pk, subtask_pk):
@@ -453,12 +464,16 @@ def subtask_done(request, pk, subtask_pk):
     if wanted is None:
         return HttpResponseBadRequest("done must be 1 or 0")
     subtask.done = wanted
-    subtask.save(update_fields=["done"])
+    with transaction.atomic():
+        subtask.save(update_fields=["done"])
+        mark_edited(pk)
     return back_to_subtasks(request, pk)
 
 
 @require_POST
 def subtask_delete(request, pk, subtask_pk):
     subtask = get_subtask_or_404(pk, subtask_pk)
-    subtask.delete()
+    with transaction.atomic():
+        subtask.delete()
+        mark_edited(pk)
     return back_to_subtasks(request, pk)

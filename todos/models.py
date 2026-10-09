@@ -130,6 +130,19 @@ class Todo(models.Model):
         """The next to-do of a repeating one, not saved yet."""
         return Todo(**self.next_values())
 
+    def copy_subtasks_to(self, copy):
+        """Give the saved next copy the same steps, in order, all not done.
+
+        One INSERT for all of them (bulk_create). Only the titles are copied.
+        """
+        Subtask.objects.bulk_create(
+            [Subtask(todo=copy, title=title) for title in self.subtask_titles()]
+        )
+
+    def subtask_titles(self):
+        """The titles of this to-do's steps, oldest first."""
+        return list(self.subtasks.values_list("title", flat=True))
+
     def set_done(self, target):
         """Done (target=True) or Undo (target=False). Does nothing if it is already so.
 
@@ -156,12 +169,14 @@ class Todo(models.Model):
                     except OverflowError:
                         return  # no date after 31 Dec 9999: Done, with no copy
                     copy.save()
+                    # Same transaction: the copy and its steps, or neither.
+                    fresh.copy_subtasks_to(copy)
                     Todo.objects.filter(pk=fresh.pk).update(next_todo=copy)
             elif fresh.next_todo_id is not None:
                 # The copy's own state decides, in one conditional DELETE.
                 # Never build the copy again from the original: the original
                 # may have changed since Done (even its repeat).
-                # Feature 15: changing a copy's subtasks must also count as edited.
+                # A change to the copy's steps sets its `edited` (the step views).
                 Todo.objects.filter(
                     pk=fresh.next_todo_id,
                     done=False,
