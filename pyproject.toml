@@ -20,7 +20,9 @@ dev = [
 
 [tool.ruff]
 line-length = 88
-extend-exclude = ["*/migrations/*"]
+# Ruff 0.16 also formats Python blocks inside Markdown. Our plans in docs/ show
+# code on purpose, so leave Markdown alone.
+extend-exclude = ["*/migrations/*", "*.md"]
 
 [tool.ruff.lint]
 # E/W: style errors · F: real mistakes (unused names, undefined names)
