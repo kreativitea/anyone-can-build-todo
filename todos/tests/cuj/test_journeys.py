@@ -29,12 +29,12 @@ def todo_row(todo, done=False, repeat="", progress=""):
 
     The title, its priority label and its due date come from `title_element`,
     which builds them from the to-do itself. `repeat` is the words an open
-    repeating to-do shows, like "Every week". Then the steps link `progress`
-    (if any), the Edit link, Done and Delete.
+    repeating to-do shows, like "Every week". `progress` is the steps line,
+    inside the title block. Then the Edit link, Done and Delete.
     """
     return (
         f'<li id="todo-{todo.pk}" class="{"done" if done else ""}">'
-        f"{title_element(todo, repeat=repeat)}{progress}"
+        f"{title_element(todo, repeat=repeat, progress=progress)}"
         f'<a class="edit" href="{reverse("todo_edit", args=[todo.pk])}" '
         f'aria-label="Edit {escape(todo.title)}">Edit</a>'
         f"{toggle_form(todo, done)}"
@@ -186,7 +186,7 @@ class JourneyTests(TestCase):
         # Back on the list: "1 of 2 steps", and the to-do itself is still open.
         page = self.client.get(link_href(page, "Back to the list"))
         progress = (
-            f'<a class="progress" href="{steps_url}" '
-            'aria-label="1 of 2 steps for Bake a cake">1 of 2 steps</a>'
+            f'<small class="progress"><a href="{steps_url}" '
+            'aria-label="1 of 2 steps for Bake a cake">1 of 2 steps</a></small>'
         )
         self.assert_list(page, todo_row(cake, progress=progress))

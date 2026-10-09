@@ -389,15 +389,19 @@ def show_date(day):
     return f"{day.day} {day:%b %Y}"
 
 
-def title_element(todo, query="", selected=False, match_hint=False, repeat=""):
+def title_element(
+    todo, query="", selected=False, match_hint=False, repeat="", progress=""
+):
     """The whole <span class="title"> of one row: the link, the search's
     "matches in notes" hint, the priority label (High or Low; Medium has none),
-    the due date and the repeat.
+    the due date, the repeat and the steps progress.
 
     `query` is the list query without the selection, like "?show=active".
     `match_hint` is True when the search matched only the notes.
     `repeat` is the words an OPEN repeating to-do shows, like "Every week";
     "" means no repeat span (a to-do that does not repeat, or a completed one).
+    `progress` is the whole "1 of 3 steps" element (its own line, last in the
+    title block), or "" for a to-do with no steps.
     """
     joiner = "&" if query else "?"
     href = f"/{escape(query)}{joiner}selected={todo.pk}#details"
@@ -415,7 +419,7 @@ def title_element(todo, query="", selected=False, match_hint=False, repeat=""):
     repeat_span = f'<span class="repeat">{repeat}</span>' if repeat else ""
     return (
         f'<span class="title"><a href="{href}"{current}>{escape(todo.title)}</a>'
-        f"{hint}{label}{due}{repeat_span}</span>"
+        f"{hint}{label}{due}{repeat_span}{progress}</span>"
     )
 
 

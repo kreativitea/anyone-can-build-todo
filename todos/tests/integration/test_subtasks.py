@@ -64,19 +64,25 @@ EMPTY_BOX = (
 
 
 def progress_link(todo, done, total, query=""):
-    """The "1 of 3 steps" link on a list row, exactly."""
+    """The "1 of 3 steps" line on a list row, exactly: a link in its own
+    <small class="progress">, last inside the title block (under the title)."""
     return (
-        f'<a class="progress" href="/{todo.pk}/subtasks/{escape(query)}" '
+        '<small class="progress">'
+        f'<a href="/{todo.pk}/subtasks/{escape(query)}" '
         f'aria-label="{done} of {total} steps for {escape(todo.title)}">'
-        f"{done} of {total} steps</a>"
+        f"{done} of {total} steps</a></small>"
     )
 
 
 def list_row(todo, progress=""):
-    """One row of the list, exactly; `progress` is the progress link or ""."""
+    """One row of the list, exactly; `progress` is the progress line or "".
+
+    The progress goes INSIDE the title block, so on a phone the title keeps
+    the full width instead of sharing it with one more item beside the buttons.
+    """
     return (
         f'<li id="todo-{todo.pk}" class="{"done" if todo.done else ""}">'
-        f"{title_element(todo)}{progress}"
+        f"{title_element(todo, progress=progress)}"
         f'<a class="edit" href="/{todo.pk}/edit/" '
         f'aria-label="Edit {escape(todo.title)}">Edit</a>'
         f"{toggle_form(todo, todo.done)}"

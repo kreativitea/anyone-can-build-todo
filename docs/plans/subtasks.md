@@ -736,8 +736,8 @@ These are the places where the build is a little different from the plan, and wh
    pane's test `test_selecting_costs_no_extra_query` still passes. `pane_element(..., steps=None)`
    builds it in tests. Tests: `test_pane_shows_the_steps_row`,
    `test_pane_of_a_todo_without_steps_has_no_steps_row`.
-5. **The progress link sits after the title `<span>`**, not inside it, so `title_element` and every
-   title test stay the same.
+5. **The progress link first sat after the title `<span>`**, not inside it. This was changed
+   before the merge (see "The steps line moved under the title" at the end).
 6. **The delete-completed query test** was changed on today's `main` (without 19's `next_todo`).
    Checked for 2 ids and for 5 ids: exactly one `SELECT` reads `todos_todo`, one
    `DELETE FROM "TODOS_SUBTASK" WHERE`, one `DELETE FROM "TODOS_TODO" WHERE`, **no** `UPDATE`, no
@@ -883,3 +883,23 @@ These changes close the gaps. Each new or changed test was first seen failing (l
   `copy_subtasks_to`; the copy keeps each step's `done`; steps saved one by one (11 != 14
   queries); no `mark_edited` in add, in Done/Undo, or in delete; `mark_edited` before the form is
   checked; delete completed in a loop (2 and 5 deletes, not 1).
+
+### The steps line moved under the title (merge-queue check)
+
+At a real 375-pixel phone width, the "1 of 3 steps" link was its own flex item beside Edit, Done
+and Delete, so the title was squeezed into a column about 70 pixels wide. Now the link is inside
+the title block, on its own small line after the due date and the repeat:
+`<small class="progress"><a href="/5/subtasks/" aria-label="1 of 3 steps for Bake a cake">1 of 3
+steps</a></small>`, with `display: block`. The title keeps the full width.
+
+- Inside `.title`, a link takes the title link's style (no underline, bold when selected). So the
+  steps link has its own rule: always underlined, never bold, grey like the due date.
+- Tests: `title_element(..., progress="")` puts the steps line last inside the title block;
+  `progress_link` builds the new element; `list_row` and the journey's `todo_row` pass it through
+  `title_element`. The whole-row checks (`test_list_shows_step_progress`,
+  `test_split_a_todo_into_steps`) and `test_titles_are_escaped` failed against the old template
+  ("the link beside the buttons"; `subtasks-progress-before.txt`) and pass now. `parts.titles`
+  is unchanged: the steps link is not a direct child of the title block.
+- By eye at 1280 (headless Chrome): the row shows the title and its High label on line 1, the
+  due date on line 2, and the underlined grey "1 of 3 steps" on line 3; Edit, Done and Delete stay
+  on the right. The 375-pixel check is done by the orchestrator.
