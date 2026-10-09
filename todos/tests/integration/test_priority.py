@@ -3,21 +3,12 @@ from django.test import TestCase
 from django.urls import reverse
 
 from todos.models import Todo
-from todos.tests.integration.helpers import PRIORITY_SELECT
+from todos.tests.integration.helpers import PRIORITY_SELECT, title_element
 
 # The labels on the list, as whole elements.
 HIGH_LABEL = '<span class="priority high">High priority</span>'
 MEDIUM_LABEL = '<span class="priority medium">Medium priority</span>'
 LOW_LABEL = '<span class="priority low">Low priority</span>'
-
-
-def title_with_label(title, label=""):
-    """A to-do's whole title span, with its label inside it (or no label).
-
-    Matching the whole span proves the label is in the right row, not
-    somewhere else on the page.
-    """
-    return f'<span class="title">{title}{label}</span>'
 
 
 # The priority select after a failed post where the person chose Low.
@@ -69,28 +60,28 @@ class PriorityTests(TestCase):
         self.assertContains(response, TITLE_BOX_WITH_BUY_MILK, count=1, html=True)
 
     def test_high_label_is_shown_and_medium_has_none(self):
-        Todo.objects.create(title="Call home", priority=Todo.Priority.HIGH)
-        Todo.objects.create(title="Buy milk", priority=Todo.Priority.MEDIUM)
+        home = Todo.objects.create(title="Call home", priority=Todo.Priority.HIGH)
+        milk = Todo.objects.create(title="Buy milk", priority=Todo.Priority.MEDIUM)
         response = self.client.get(reverse("todo_list"))
         self.assertContains(response, HIGH_LABEL, count=1, html=True)
         self.assertContains(response, MEDIUM_LABEL, count=0, html=True)
         self.assertContains(response, LOW_LABEL, count=0, html=True)
         # Each label is inside its own to-do's title, and Medium's title has none.
-        self.assertContains(
-            response, title_with_label("Call home", HIGH_LABEL), count=1, html=True
-        )
-        self.assertContains(response, title_with_label("Buy milk"), count=1, html=True)
+        # title_element builds the label from the to-do's priority.
+        self.assertIn(HIGH_LABEL, title_element(home))
+        self.assertContains(response, title_element(home), count=1, html=True)
+        self.assertNotIn("priority", title_element(milk))
+        self.assertContains(response, title_element(milk), count=1, html=True)
         # A space between the title and the label, so the text reads
         # "Call home High priority". html=True ignores spaces, so not here.
-        self.assertContains(response, f"Call home {HIGH_LABEL}", count=1)
+        self.assertContains(response, f"Call home</a> {HIGH_LABEL}", count=1)
 
     def test_low_label_is_shown(self):
-        Todo.objects.create(title="Read chapter 3", priority=Todo.Priority.LOW)
+        read = Todo.objects.create(title="Read chapter 3", priority=Todo.Priority.LOW)
         response = self.client.get(reverse("todo_list"))
         self.assertContains(response, LOW_LABEL, count=1, html=True)
-        self.assertContains(
-            response, title_with_label("Read chapter 3", LOW_LABEL), count=1, html=True
-        )
+        self.assertIn(LOW_LABEL, title_element(read))
+        self.assertContains(response, title_element(read), count=1, html=True)
 
     def test_error_page_keeps_the_chosen_priority(self):
         response = self.client.post(

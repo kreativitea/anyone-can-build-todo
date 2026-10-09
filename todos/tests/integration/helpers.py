@@ -341,13 +341,18 @@ def show_date(day):
 
 
 def title_element(todo, query="", selected=False):
-    """The whole <span class="title"> of one row: the link and the due date.
+    """The whole <span class="title"> of one row: the link, the priority label
+    (High or Low; Medium has none) and the due date.
 
     `query` is the list query without the selection, like "?show=active".
     """
     joiner = "&" if query else "?"
     href = f"/{query}{joiner}selected={todo.pk}#details"
     current = ' aria-current="true"' if selected else ""
+    label = ""
+    if todo.priority != todo.Priority.MEDIUM:
+        name = todo.get_priority_display()
+        label = f' <span class="priority {name.lower()}">{name} priority</span>'
     due = (
         f'<small class="due">due {show_date(todo.due_date)}</small>'
         if todo.due_date
@@ -355,23 +360,24 @@ def title_element(todo, query="", selected=False):
     )
     return (
         f'<span class="title"><a href="{href}"{current}>{escape(todo.title)}</a>'
-        f"{due}</span>"
+        f"{label}{due}</span>"
     )
 
 
 def pane_element(
-    todo, *, status="Active", due="No due date", priority=None, created, close_url
+    todo, *, status="Active", due="No due date", priority="Medium", created, close_url
 ):
     """The whole details <aside>, exactly as the page must show it.
 
     `close_url` is the list address without the selection, like "/"; the
-    builder adds "#todo-<pk>". `priority=None` means no Priority row: priority
-    (feature 6) is not on main yet.
+    builder adds "#todo-<pk>". The pane shows every priority, Medium too.
     """
-    rows = [("Status", status), ("Due", due)]
-    if priority is not None:
-        rows.append(("Priority", priority))
-    rows.append(("Created", created))
+    rows = [
+        ("Status", status),
+        ("Due", due),
+        ("Priority", priority),
+        ("Created", created),
+    ]
     dl = "".join(f"<dt>{name}</dt><dd>{value}</dd>" for name, value in rows)
     return (
         '<aside class="details" id="details" tabindex="-1" aria-label="Details">'

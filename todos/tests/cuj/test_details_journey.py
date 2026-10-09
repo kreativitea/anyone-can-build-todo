@@ -2,7 +2,6 @@
 
 The owner decided: no real-browser tests. So each step is what the browser
 sends (a GET of a link, a POST of a form) and what the page shows after it.
-The older Playwright journey in test_journeys.py is being removed in its own PR.
 """
 
 import re
@@ -41,7 +40,9 @@ class DetailsJourneyTests(TestCase):
         self.assertIsNotNone(href, "the title Buy milk is not a link")
         page = self.client.get(href)
         self.assertEqual(page_parts(page).panes, ["Details"])
-        pane = pane_element(milk, due="5 Oct 2026", created=created, close_url="/")
+        pane = pane_element(
+            milk, due="5 Oct 2026", priority="Medium", created=created, close_url="/"
+        )
         self.assertContains(page, pane, count=1, html=True)
 
         # Done: after the POST and the redirect, the pane is still open.
@@ -49,7 +50,12 @@ class DetailsJourneyTests(TestCase):
         self.assertIn(done_url, page_parts(page).post_actions)
         page = self.client.post(done_url, follow=True)
         pane = pane_element(
-            milk, status="Completed", due="5 Oct 2026", created=created, close_url="/"
+            milk,
+            status="Completed",
+            due="5 Oct 2026",
+            priority="Medium",
+            created=created,
+            close_url="/",
         )
         self.assertContains(page, pane, count=1, html=True)
 

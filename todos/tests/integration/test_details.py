@@ -20,7 +20,9 @@ HINT = '<p class="pane-hint">Click a to-do\'s title to see its details.</p>'
 
 class DetailsPaneTests(TestCase):
     def setUp(self):
-        self.milk = Todo.objects.create(title="Buy milk", due_date=date(2026, 10, 5))
+        self.milk = Todo.objects.create(
+            title="Buy milk", due_date=date(2026, 10, 5), priority=Todo.Priority.HIGH
+        )
         self.home = Todo.objects.create(title="Call home", done=True)
         # auto_now_add ignores a value given at create, so set it afterwards.
         # 15:30 UTC on 1 October is 00:30 on 2 October in Tokyo.
@@ -34,7 +36,11 @@ class DetailsPaneTests(TestCase):
 
     def milk_pane(self, close_url="/"):
         return pane_element(
-            self.milk, due="5 Oct 2026", created="2 Oct 2026", close_url=close_url
+            self.milk,
+            due="5 Oct 2026",
+            priority="High",
+            created="2 Oct 2026",
+            close_url=close_url,
         )
 
     # Details pane: new behaviour.
@@ -63,10 +69,15 @@ class DetailsPaneTests(TestCase):
         # The hint is only for when nothing is selected.
         self.assertNotContains(response, HINT, html=True)
 
-    def test_pane_shows_completed_and_no_due_date(self):
+    def test_pane_shows_completed_medium_and_no_due_date(self):
         response = self.client.get(f"/?selected={self.home.pk}")
+        # Medium has no label on the row, but the pane shows everything.
         pane = pane_element(
-            self.home, status="Completed", created="3 Oct 2026", close_url="/"
+            self.home,
+            status="Completed",
+            priority="Medium",
+            created="3 Oct 2026",
+            close_url="/",
         )
         self.assertContains(response, pane, count=1, html=True)
 
