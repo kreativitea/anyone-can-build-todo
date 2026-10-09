@@ -15,6 +15,7 @@ def page_context(request, form):
         "form": form,
         "has_todos": Todo.objects.exists(),
         "remaining_count": Todo.objects.remaining().count(),
+        "completed_ids": list(Todo.objects.completed().values_list("pk", flat=True)),
     }
 
 
@@ -43,4 +44,20 @@ def todo_toggle(request, pk):
 def todo_delete(request, pk):
     todo = get_object_or_404(Todo, pk=pk)
     todo.delete()
+    return redirect("todo_list")
+
+
+# A real id is a plain number. A longer one cannot be a row, and is too big for SQLite.
+MAX_ID_DIGITS = 18
+
+
+@require_POST
+def todo_delete_completed(request):
+    """Delete the completed to-dos whose ids the page sent, and only those."""
+    ids = [
+        value
+        for value in request.POST.getlist("ids")
+        if value.isascii() and value.isdigit() and len(value) <= MAX_ID_DIGITS
+    ]
+    Todo.objects.completed().filter(pk__in=ids).delete()
     return redirect("todo_list")

@@ -1,6 +1,6 @@
 # Plan: delete the completed to-dos (feature 11, "clear completed")
 
-Status: **approved.** This is the second version. The first version was checked by an
+Status: **done.** See "What happened" at the end. This is the second version. The first version was checked by an
 adversarial review (a reviewer whose job is to find what is wrong). Every finding is fixed below.
 The owner answered the open questions (see the end).
 
@@ -315,3 +315,33 @@ Every test that exists before this change must also still pass.
    can delete at most about 999 completed to-dos. **Decided: the owner accepts this limit.**
 3. **Feature 8 (filter).** After the delete, the browser goes to the plain list, so a chosen filter
    is lost. Feature 8 should decide this once for add, toggle, delete and delete completed together.
+
+## What happened
+
+The tests were written first and committed alone, with this plan. Before the code changed,
+`make test` showed `Integration: 19 passed, 2 failed, 7 errors` and `Unit: 4 passed, 1 error`.
+Every new test failed for the reason in the tables above: the unit test with `AttributeError`
+(no `completed()`), seven integration tests with `NoReverseMatch` (no `todo_delete_completed`),
+and the two page tests because the form and button were not on the page. The protecting test
+passed. After the code: `Unit: 5 passed`, `Integration: 28 passed`, `CUJ: 1 passed` (the journey
+test did not change), and `makemigrations --check --dry-run` said "No changes detected".
+
+Feature 12 (count) was not on this branch's base (`feature/due-date`), so this branch made
+`TodoQuerySet` and `<footer class="list-footer">` (with its CSS line) itself, as the plan says. Expect
+the merge clashes listed in "Merge conflicts, honestly".
+
+Small differences from the plan, with reasons:
+
+- **`urls.py`:** the new `path(...)` is split over three lines. The one-line version is longer than
+  Ruff's line limit, and `ruff format` splits it.
+- **`views.py`:** the new view has a one-line docstring (a short note under `def` that says what
+  the function does). Nothing else changed.
+- **Tests:** the new integration tests are in their own class, `DeleteCompletedTests`, so they can
+  share the three starting to-dos in `setUp`. The one-to-do and nothing-completed tests delete
+  from those three, instead of starting with a different set.
+- **Step 5 (try it by hand with `make run` in two tabs) was not done.** The race it checks is
+  covered by `test_completed_after_the_page_loaded_survives` and `test_open_todo_is_never_deleted`.
+- **A warning for later:** `uv run ruff format` with no file names (that is `make format`) also
+  rewrites Python code blocks inside Markdown files. It changed the `urls.py` example in this plan
+  into wrong code, so that change was undone. The commit checks only format `.py` files, so they
+  are safe.

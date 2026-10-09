@@ -55,6 +55,13 @@
   {% if has_todos %}
     <div class="list-footer">
       <p class="count">{{ remaining_count }} item{{ remaining_count|pluralize }} left</p>
+      {% if completed_ids %}
+        <form class="delete-completed" method="post" action="{% url 'todo_delete_completed' %}">
+          {% csrf_token %}
+          {% for pk in completed_ids %}<input type="hidden" name="ids" value="{{ pk }}">{% endfor %}
+          <button type="submit">Delete {{ completed_ids|length }} completed to-do{{ completed_ids|length|pluralize }}</button>
+        </form>
+      {% endif %}
     </div>
   {% endif %}
 </body>
