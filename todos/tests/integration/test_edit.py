@@ -4,10 +4,18 @@ from unittest.mock import patch
 
 from django.test import Client, TestCase
 from django.urls import reverse
+from django.utils import timezone
 
 from todos.forms import TodoEditForm
 from todos.models import Todo
-from todos.tests.integration.helpers import page_parts
+from todos.tests.integration.helpers import (
+    page_forms,
+    page_parts,
+    page_without_csrf,
+    pane_element,
+    show_date,
+    title_element,
+)
 
 
 def title_box(value, error=False):
@@ -275,3 +283,146 @@ class EditTests(TestCase):
             'id="id_title">',
             html=True,
         )
+
+
+class EditPriorityAndNotesTests(TestCase):
+    """Priority (6) and notes (7) on the edit page: they come from TodoForm."""
+
+    def setUp(self):
+        self.todo = Todo.objects.create(
+            title="Buy milk",
+            due_date=date(2026, 10, 12),
+            priority=Todo.Priority.HIGH,
+            notes="2 litres",
+        )
+        self.url = reverse("todo_edit", args=[self.todo.pk])
+
+    def assert_saved(self, **values):
+        self.todo.refresh_from_db()
+        for name, value in values.items():
+            with self.subTest(field=name):
+                self.assertEqual(getattr(self.todo, name), value)
+
+    def edit_page_form(self):
+        """The edit page's one POST form, read like a browser reads it."""
+        page = self.client.get(self.url)
+        (form,) = [form for form in page_forms(page) if form.method == "post"]
+        return form
+
+    def test_edit_page_shows_saved_priority_and_notes(self):
+        response = self.client.get(self.url)
+        self.assertContains(
+            response,
+            '<select name="priority" id="id_priority">'
+            '<option value="3" selected>High</option>'
+            '<option value="2">Medium</option>'
+            '<option value="1">Low</option>'
+            "</select>",
+            html=True,
+        )
+        self.assertContains(response, '<label for="id_notes">Notes:</label>', html=True)
+        # A visible label, so no aria-label on the box.
+        self.assertContains(
+            response,
+            '<textarea name="notes" cols="40" rows="3" maxlength="500" id="id_notes">'
+            "2 litres</textarea>",
+            html=True,
+        )
+
+    def test_edit_saves_notes_and_priority(self):
+        cases = [
+            ("new notes", {"notes": "1 litre"}, {"notes": "1 litre"}),
+            ("empty notes", {"notes": ""}, {"notes": ""}),
+            ("a new priority", {"priority": "1"}, {"priority": Todo.Priority.LOW}),
+        ]
+        for name, posted, saved in cases:
+            with self.subTest(name):
+                data = {"title": "Buy milk", "priority": "3", "notes": "2 litres"}
+                self.client.post(self.url, {**data, **posted})
+                self.assert_saved(**saved)
+
+    def test_editing_only_the_title_keeps_the_rest(self):
+        # Send exactly what the edit page's form sends, with a new title.
+        Todo.objects.filter(pk=self.todo.pk).update(notes="2 litres\nfull fat")
+        form = self.edit_page_form()
+        self.client.post(form.action, form.data(title="Buy oat milk"))
+        self.assert_saved(
+            title="Buy oat milk",
+            due_date=date(2026, 10, 12),
+            priority=Todo.Priority.HIGH,
+            notes="2 litres\nfull fat",
+        )
+
+    def test_fields_left_out_of_a_post(self):
+        # A hand-made post with only a title. A browser never sends this; the
+        # test records Django's rules, so a change is seen.
+        self.client.post(self.url, {"title": "Buy oat milk"})
+        self.assert_saved(
+            title="Buy oat milk",
+            due_date=None,  # no model default: removed
+            notes="2 litres",  # the model has default="": kept
+            priority=Todo.Priority.MEDIUM,  # the priority rule: missing is Medium
+        )
+
+    # The three tests the notes plan (7) gave to this feature.
+
+    def test_edit_changes_the_notes(self):
+        self.client.post(self.url, {"title": "Buy milk", "notes": "Soy\r\nOr oat"})
+        self.assert_saved(notes="Soy\nOr oat")
+
+    def test_edit_can_empty_the_notes(self):
+        self.client.post(self.url, {"title": "Buy milk", "notes": ""})
+        self.assert_saved(notes="")
+
+    def test_edit_title_keeps_the_notes(self):
+        # The notes as the edit page sends them.
+        form = self.edit_page_form()
+        self.assertEqual(form.fields["notes"], ["2 litres"])
+        self.client.post(form.action, form.data(title="Buy oat milk"))
+        self.assert_saved(title="Buy oat milk", notes="2 litres")
+
+
+class EditLinkPlaceTests(TestCase):
+    """Where the Edit links are: on each row, and in the details pane."""
+
+    def setUp(self):
+        self.todo = Todo.objects.create(
+            title="Buy milk", due_date=date(2026, 10, 12), priority=Todo.Priority.HIGH
+        )
+
+    def test_edit_link_is_right_before_done(self):
+        # The whole row, exactly: the title span (link, priority, due date),
+        # then Edit, then Done, then Delete.
+        pk = self.todo.pk
+        row = (
+            f'<li id="todo-{pk}" class="">'
+            f"{title_element(self.todo)}"
+            f'<a class="edit" href="/{pk}/edit/" aria-label="Edit Buy milk">Edit</a>'
+            f'<form method="post" action="/{pk}/toggle/">'
+            '<button type="submit">Done</button></form>'
+            f'<form method="post" action="/{pk}/delete/">'
+            '<button type="submit">Delete</button></form>'
+            "</li>"
+        )
+        response = self.client.get(reverse("todo_list"))
+        self.assertInHTML(row, page_without_csrf(response), count=1)
+
+    def test_pane_has_an_edit_link(self):
+        pk = self.todo.pk
+        response = self.client.get(f"/?show=active&selected={pk}")
+        pane = pane_element(
+            self.todo,
+            due="12 Oct 2026",
+            priority="High",
+            created=show_date(timezone.localtime(self.todo.created_at).date()),
+            edit_url=f"/{pk}/edit/?show=active&selected={pk}",
+            close_url="/?show=active",
+        )
+        self.assertContains(response, pane, count=1, html=True)
+
+    def test_save_from_the_pane_keeps_it_open(self):
+        pk = self.todo.pk
+        url = reverse("todo_edit", args=[pk]) + f"?show=active&selected={pk}"
+        response = self.client.post(url, {"title": "Buy oat milk", "priority": "3"})
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response["Location"], f"/?show=active&selected={pk}")

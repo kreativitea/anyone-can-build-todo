@@ -407,6 +407,7 @@ def pane_element(
     created,
     close_url,
     notes=None,
+    edit_url=None,
 ):
     """The whole details <aside>, exactly as the page must show it.
 
@@ -414,7 +415,13 @@ def pane_element(
     builder adds "#todo-<pk>". The pane shows every priority, Medium too.
     `notes` (None: no notes row) is plain text: each line is escaped, and the
     lines are joined with <br>, after the Created row.
+    `edit_url` is the pane's Edit link: the edit page with the same list query,
+    selection included. None builds it from `close_url`, like the page does.
     """
+    if edit_url is None:
+        query = close_url.removeprefix("/")
+        joiner = "&" if query else "?"
+        edit_url = f"/{todo.pk}/edit/{query}{joiner}selected={todo.pk}"
     rows = [
         ("Status", status),
         ("Due", due),
@@ -429,7 +436,8 @@ def pane_element(
         '<aside class="details" id="details" tabindex="-1" aria-label="Details">'
         f"<h2>{escape(todo.title)}</h2>"
         f"<dl>{dl}</dl>"
-        f'<p class="details-actions"><a href="{close_url}#todo-{todo.pk}">Close</a></p>'
+        f'<p class="details-actions"><a href="{escape(edit_url)}">Edit</a> '
+        f'<a href="{close_url}#todo-{todo.pk}">Close</a></p>'
         "</aside>"
     )
 

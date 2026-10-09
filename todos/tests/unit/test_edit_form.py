@@ -30,6 +30,13 @@ class EditFormTests(SimpleTestCase):
             },
             # Django moves "type" out of attrs, into widget.input_type.
             "due_date": {},
+            "priority": {},
+            "notes": {
+                "cols": "40",
+                "rows": 3,
+                "aria-label": "Notes",
+                "maxlength": "500",
+            },
         }
         self.assertEqual(set(add_form.fields), set(expected))
         for name, attrs in expected.items():
