@@ -45,3 +45,16 @@ class TodoModelTests(TestCase):
         completed = Todo.objects.create(title="Buy milk", done=True)
         Todo.objects.create(title="Read chapter 3")
         self.assertEqual(list(Todo.objects.completed()), [completed])
+
+    # Priority: new behaviour.
+
+    def test_new_todo_is_medium_priority(self):
+        todo = Todo.objects.create(title="Buy milk")
+        self.assertEqual(todo.priority, Todo.Priority.MEDIUM)
+
+    def test_priority_sorts_high_to_low_in_the_database(self):
+        # A number sorts in the right order; the words would sort high, low, medium.
+        low = Todo.objects.create(title="Low", priority=Todo.Priority.LOW)
+        high = Todo.objects.create(title="High", priority=Todo.Priority.HIGH)
+        medium = Todo.objects.create(title="Medium", priority=Todo.Priority.MEDIUM)
+        self.assertEqual(list(Todo.objects.order_by("-priority")), [high, medium, low])
