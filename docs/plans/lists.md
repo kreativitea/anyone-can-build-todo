@@ -1,6 +1,6 @@
 # Plan: lists ("Work", "Shopping")
 
-Status: **approved** (third version, with the owner's answers below). Being built: see "What happened" when it is done.
+Status: **done.** Approved (third version, with the owner's answers below). Built in three commits (A, B, C); see "What happened".
 
 **The owner's answers:**
 
@@ -768,3 +768,135 @@ old `<h1>` text, update that one assertion and say so in the PR.
    many.
 2. After moving a to-do, the person goes back to the original list.
 3. No production data yet: the migration deletes old to-dos; no back-filling.
+
+## What happened
+
+Built on `main` after accounts (everything up to `0009_todo_owner_required`), in three commits:
+**A** (the plumbing; the old tests change setup and addresses only; green), **B** (the behaviour
+tests; red for the reasons below), **C** (the feature; green). These are the places where the build
+is different from the plan, and why.
+
+1. **Step A is bigger than "helpers only".** With a required `todo_list`, the old suite can only be
+   green if the model, the three migrations, `Todo.save()`, the new addresses (`/` → first list,
+   `/lists/<id>/`, add, delete completed), `create_default` in `signup`, the copy's `todo_list` in
+   `next_values()` and the edit form's list box (only the person's lists) are already there. So in
+   B some plan tests passed at once (they are **protecting** tests: the owner rule in `save()`,
+   the edit form's own lists, a move into ben's list, the add form without a list box, the
+   migration). Each of them was shown failing with a deliberate bug (below).
+2. **The edit form's list box is not required.** A browser always sends it. A hand-made post
+   without it (many old tests post only a title) keeps the to-do in its list, like a missing
+   priority is Medium (`clean_todo_list`). So the `<select>` has no `required` attribute, exactly
+   as the plan's element. Unit test: `test_edit_form_without_a_list_keeps_the_list`.
+3. **Test helpers** are in `todos/tests/integration/helpers.py` (accounts put them there, not in
+   `todos/tests/helpers.py`). New: `first_list(user)`, `list_path(list_id, query="")`; in
+   `LoggedInTestCase`: `cls.todo_list`, `make_todo(todo_list=None, **fields)`,
+   `list_url(todo_list=None, query="")`, `add_url(...)`, `delete_completed_url(...)`,
+   `self.list_footer(...)` and `self.delete_completed_form(...)`. `title_element` builds the link
+   from `todo.todo_list_id`. `log_in()` expects `/` then the first list. `page_parts(...)
+   .current_links` leaves out the lists `<nav>` (its marked link is in `.current_lists`), so the old
+   filter tests still prove "exactly one filter link is marked". Unit tests that call
+   `full_clean()` pass `owner` and `todo_list` (the owner is set by `save()`); the admin helper in
+   `test_repeat.py` sends `todo_list`, like the admin page.
+4. **No real browser** (owner decision). The journey `test_keep_two_lists_apart` uses the test
+   client: it follows the links ("New list", "My to-dos", "Edit Write report", "Rename or delete
+   Shopping") and presses the page's own buttons with CSRF checks on. `press()` takes
+   `lands_on=HOME` (through `/` to the first list) or a function (an address known only after the
+   press). The old journeys changed only that: log-in and sign-up now land through `/`.
+5. **Old assertions changed on purpose (in B, red first):** the list page's `<h1>` and `<title>`
+   name the list (`test_list_page_keeps_its_title_and_add_form`, `test_page_title_names_the_search`).
+   With a search: `Search: milk – My to-dos – To-do list`.
+6. **The 404 matrix** gets `LIST_MATRIX` (the list page, add, delete completed, rename GET and
+   POST, delete; each on a fresh list of ben's with an open to-do, a step and a completed to-do;
+   whole-table snapshots of lists, to-dos and steps), and the same rows on ana's own list are not
+   404. `home` and `list_create` are in `NO_OBJECT_URLS`. The walk over the whole URL resolver
+   knows every name. **The canary:** ben's list's NAME carries the word too, and the canary also
+   opens `home`, "New list", "Rename or delete" and their error pages. **The source guard** covers
+   `TodoList`: `TodoList.objects` must go on with `.for_user(`, `.owned_by(` or `.create_default(`;
+   `get_object_or_404(TodoList, ...)` with a raw owner filter is caught.
+7. **Admin:** `TodoList` is registered (name, owner, created). In the `Todo` admin the owner is
+   read-only (it follows the list); the list is a field and a column.
+8. **CSS** for `nav.lists` is in the list page's own `{% block style %}`, not `base.html`: only that
+   page has the nav. The middleware sends a visitor's `POST` to `?next=/` via `reverse("home")`.
+9. The steps page's "Back to the list" and the edit page's Cancel go to the to-do's own list.
+
+### Red and green
+
+- **A** (`lists-A-check.txt`): `make check` passed. Integration 292, Unit 117, CUJ 6.
+- **B** (`lists-B-red-test.txt`, `lists-B-red-cuj.txt`): Integration 298 passed, 31 failed, 11
+  errors; Unit 131 passed, 1 failed, 5 errors; CUJ 6 passed, 1 failed. The reasons: the new
+  addresses answer 404 (create, rename, delete, the visitor tests), `NoReverseMatch` for
+  `list_edit` / `list_delete` (the matrix rows, the canary), `ImportError` for `TodoListForm`, the
+  list page shows every to-do of the person (only-that-list, count, delete completed, search), no
+  lists nav and the old heading, `/` with no list is 404, a move goes back to the new list, the
+  guard for sharing (`for_user` still asked the owner, not the list), and the journey has no
+  "My to-dos" heading.
+- **C** (`lists-C-green-test.txt`, `lists-C-green-cuj.txt`, `lists-C-check.txt`): Integration
+  329, Unit 137, CUJ 7 passed; `make check` passed (473 tests, "No changes detected").
+
+### Deliberate bugs, one at a time, each put back (`lists-deliberate-bugs.txt`)
+
+| Bug | Caught by |
+|---|---|
+| `list_edit` opens any list (another person's id) | the list matrix (GET and POST rows), the guard |
+| `list_delete` deletes any list | the list matrix, `test_missing_list_is_404`, the guard |
+| `get_list` (list page, add, delete completed) opens any list | the list matrix (3 rows), the guard |
+| `list_create` takes a posted owner | `test_create_list_ignores_a_posted_owner` |
+| the edit form offers every list (a to-do moves into ben's list) | 2 unit tests, `test_edit_page_list_choice`, `test_move_to_another_users_list_is_refused`, `test_my_todo_cannot_move_into_their_list`, the canary |
+| the name check is exact, not ignoring case | `test_list_form_refuses_a_name_already_used`; the two pages hit the database constraint (500) |
+| deleting a list leaves its to-dos (`DO_NOTHING`) | the unit and integration delete tests, the matrix's "my list" row, the journey |
+| `Todo.save()` keeps a wrong owner | `test_save_sets_the_owner_from_the_list` |
+| the add form gets the list box | `test_add_form_has_no_list_field` and 46 more |
+| the data migration deletes nothing | the migration tests |
+
+### The migration, checked (`lists-migration-old-data.txt`, `lists-migration-empty.txt`)
+
+- A database at `0009` with two users, six to-dos and six steps: `migrate` applied the three steps;
+  after it, 2 users, 0 to-dos, 0 steps, 0 lists. Ana logs in: `/` → `/lists/new/` (200). Then
+  `migrate todos 0009_todo_owner_required` unapplied the three, and `migrate` applied them again.
+- An empty database: `migrate` from nothing, back to `0009` and forward again; `makemigrations
+  --check --dry-run`: "No changes detected".
+
+**Making the migrations again (for the merge queue).** The usual "delete our migrations and run
+`makemigrations`" gives ONE wrong file. Instead, delete this branch's three files, then:
+
+```bash
+# 1. In models.py, give Todo.todo_list null=True for a moment.
+uv run python manage.py makemigrations todos -n todolist
+# 2. The data step: an empty migration, then add ONE line to its operations:
+#    migrations.RunPython(delete_todos_without_a_list, migrations.RunPython.noop),
+#    with `from todos.data_migrations import delete_todos_without_a_list` at the top.
+uv run python manage.py makemigrations todos --empty -n delete_todos_without_list
+# 3. Take null=True away again.
+uv run python manage.py makemigrations todos -n todo_list_required --noinput
+```
+
+Step 3 must be a single `AlterField` with no `default`. The `-n` names stay, so
+`test_lists_migration.py` finds them by their name ending.
+
+### Checked by eye (headless Chrome, 1280 × 800)
+
+`runserver` on a free port with a fresh database; a test user signed up through the real sign-up
+form, a list "Work" made through "New list" and to-dos added through the add forms; Chrome got the
+pages through a small local proxy that adds the session cookie; then the server was stopped and the
+database deleted.
+
+- **The list page with two lists** (`lists-page-1280.png`): "My to-dos  **Work**  New list" above the
+  heading (Work bold, not underlined, like the chosen filter), the heading "Work", the small
+  "Rename or delete" link under it, then the add form, search, filter, sort and the three Work
+  to-dos; the pane hint on the right.
+- **New list** (`lists-new-1280.png`): the account bar, "New list", the Name box (focused), Save and
+  Cancel.
+- **Rename or delete** (`lists-rename-delete-1280.png`): "Rename or delete Work", the box with
+  "Work", Save and Cancel, a thin line, then the button "Delete list and its 3 to-dos".
+
+### For tags (14) and reorder (16), building on this branch
+
+`Todo.todo_list` (FK, `related_name="todos"`), `TodoList` (`owner`, `name`, `created_at`),
+`TodoList.objects.for_user(user)` / `.owned_by(user)` / `.create_default(user)`,
+`DEFAULT_LIST_NAME`, `get_list(request, list_id)` and `get_owned_list(request, list_id)` in
+`views.py`, `back_to_list(request, list_id)`, `list_url(request, list_id)`,
+`page_context(request, form, current_list)`, `filter_links(params, list_id)`,
+`sort_links(params, list_id)`, `select_base(params, list_id)`. URL names: `home`, `list_create`,
+`todo_list` / `todo_add` / `todo_delete_completed` / `list_edit` / `list_delete` (each with
+`list_id`). A new address with a list id goes in `LIST_MATRIX`; one with no id in
+`NO_OBJECT_URLS`.
