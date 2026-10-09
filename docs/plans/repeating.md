@@ -1,6 +1,6 @@
 # Plan: repeating to-dos (feature 19)
 
-Status: **approved**, with the owner's answers (below). Being built on `feature/repeating`.
+Status: **done.** Built on `feature/repeating`, tests first. See "What happened" at the end.
 
 ## The owner's answers
 
@@ -689,3 +689,88 @@ How it fails today: Playwright cannot find the Repeats box.
 - **SQLite and two writers.** Python's `sqlite3` module, by default, waits up to 5 seconds for the
   other writer to finish; after that, the request fails with "database is locked". With one shared
   list and few users, that is fine.
+
+## What happened
+
+Built on `feature/repeating`, from `main` at "Details pane: space between the Edit and Close
+links (#13)". Feature 9 (sort) was not on `main` yet, so this branch does not have it.
+
+**Tests first.** The tests were written and committed before the code. Run on the code of that
+time: `make test` ran 269 tests, 43 failed or errored (14 failures, 29 errors); `make test-cuj`
+ran 4, 3 failed. Every one failed for the expected reason:
+
+- 25 `TypeError: Todo() got unexpected keyword arguments: 'repeat'`, 3 `AttributeError` (no
+  `repeat`), and `ModuleNotFoundError: No module named 'todos.repeat'` (the date tests).
+- The flip design, shown by tests on a to-do that does **not** repeat: Done twice (double click, old
+  tab) ends **open** (`False is not true`); Undo on an open to-do makes it **done**
+  (`True is not false`); a post without `done`, or with `2` or `yes`, flips it (`302 != 400`).
+- The form: a repeat with no date, and `yearly`, are saved (`302 != 200`); no Repeats box; no
+  hidden `done` input.
+- Delete completed's query test (the new version) finds no `SELECT`/`UPDATE` for the link.
+- The three journeys: the rows have no hidden `done` input yet, and the new journey stops at
+  `the form has no field ['repeat']`.
+
+**After the code:** `make test` 269 passed (unit 85, integration 184), `make test-cuj` 4 passed,
+`make check` passed (every commit check, "No changes detected" for migrations, 273 tests).
+
+**Deliberate bugs**, each put in for a moment and taken out again; every one was caught:
+
+| Bug | Caught by |
+|---|---|
+| Monthly without "the last day stays the last day" | last-day, drift and 12-step tests (`28 Mar != 31 Mar`) |
+| Monthly with `due.day` instead of `min(due.day, last)` | short-month tests (`ValueError: day is out of range`) |
+| Monthly without the December branch | the Dec → Jan tests (`ValueError`) |
+| `set_done` the old way (read in Python, `save()`) | `test_two_requests_at_once_make_one_copy` (`3 != 2`) |
+| The view ignores `done` and flips | the weekly double-click test, the old-tab test, the Undo-on-open test, the 400 test |
+| Undo deletes an edited copy | `test_undo_keeps_an_edited_copy` |
+| Undo deletes a completed copy / one with its own copy | `test_undo_in_a_chain_keeps_the_completed_copy` |
+| Done copies every to-do (protecting test) | `test_done_on_a_todo_that_does_not_repeat_makes_no_copy` (`ValueError: Not a repeat: 'none'`) |
+| No "needs a due date" check | the model, add and edit tests (`302 != 200`) |
+| `next_values()` forgets `priority` | the field-copy test (`MEDIUM != HIGH`) |
+| The list shows the repeat on a completed row | `test_completed_repeating_todo_does_not_show_repeat` |
+| The pane shows Repeats for every to-do | `test_pane_has_no_repeats_row_for_a_todo_that_does_not_repeat` |
+
+**Delete completed's query test, changed on purpose.** `main`'s version ("no `SELECT` on
+`todos_todo`") fails on the new model: it finds one `SELECT` of the rows to delete. That is Django
+emptying the `next_todo` links (`SET_NULL`). The new version checks exactly 1 `SELECT`, 1 `UPDATE`
+and 1 `DELETE` on `todos_todo`, with 2 ids and with 5 ids, so the number does not grow with the
+rows. It passes.
+
+**Migration.** `makemigrations` made `0005_todo_next_todo_todo_repeat.py` (after
+`0004_todo_notes`; not edited). Checked on a database with three to-dos at `0004`: after
+`migrate`, all three have `repeat = none` and an empty `next_todo`, nothing else changed. Then one
+of them (due 31 Oct 2026) was made monthly, and `set_done(True)` made the copy due **30 Nov 2026**
+and linked it.
+
+**Checked by eye** (headless Chrome, 1280 wide, `runserver` on a free port, Done pressed through
+HTTP with the page's own form and CSRF token): before Done, the weekly row shows `due 12 Oct 2026`
+and `Every week`, and the pane has the row `Repeats: Every week` after `Due`. After Done the old
+row is struck through with no `Every week`, the pane says `Completed` and still `Repeats: Every
+week`, and a new row `Take out the rubbish`, High, `due 19 Oct 2026`, `Every week` is at the end;
+"3 items left" and "Delete 1 completed to-do". The Repeats box sits on the add form's second row,
+next to Add. The phone width was not checked in this run.
+
+**Where the build differs from the text above** (CONVENTIONS and `main` win):
+
+- **No real browser.** The journey `test_a_weekly_todo_comes_back` uses Django's test client and
+  `press()`; it ends with `page_parts(page).titles == ["Take out the rubbish"]`.
+- **The details pane (21) gets a Repeats row**, right after Due, only when the to-do repeats. It
+  is also shown for a completed to-do: the pane shows every saved field (Medium too), while the
+  list hides the repeat of history. Three tests.
+- **The form field has `initial="none"`** (like priority), so a new form draws
+  `Does not repeat` as `selected`.
+- **CSS** went into `todo_list.html`'s `{% block style %}` (where the list's CSS is on `main`), not
+  `base.html`. `.repeat` is a block line under the due date, grey and small like `.due`.
+- **More tests than the plan:** a `WantedStateTests` class on a to-do that does **not** repeat (the
+  old-tab test, Undo on open, the 400 test, the protecting test), so they fail today for the flip
+  reason and not for the missing field; `test_admin_done_makes_no_copy` (owner answer 5); a unit
+  test that the admin lists and filters `repeat` and never shows `next_todo`.
+- **Test helpers:** `title_element(..., repeat="Every week")`, a new `toggle_form(todo, done)` (the
+  whole Done/Undo form with its hidden input), and `pane_element(..., repeats=...)`.
+  `test_edit_form_does_not_change_the_add_form` lists `repeat` too.
+- **Step 7 (`make run` by hand)** was replaced by the screenshots and the migration check above.
+
+**For feature 15 (subtasks):** add the subtask copying after `copy.save()` in `set_done`, add
+`has_untouched_subtasks_of` where the comment in `set_done` says, and update
+`test_delete_completed_does_not_load_each_todo` for the subtask queries. A toggle test in 15 must
+post `done=1` or `done=0`.

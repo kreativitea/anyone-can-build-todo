@@ -6,7 +6,7 @@ from urllib.parse import urlencode
 from django.db import DatabaseError, transaction
 from django.db.models import F, Q
 from django.db.models.functions import Lower
-from django.http import Http404
+from django.http import Http404, HttpResponseBadRequest
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_http_methods, require_POST
@@ -311,11 +311,19 @@ def todo_add(request):
     return render(request, "todos/todo_list.html", page_context(request, form))
 
 
+# What the Done and Undo buttons send: the state the person wants. A second
+# Done (a double click, an old tab) then changes nothing.
+WANTED = {"1": True, "0": False}
+
+
 @require_POST
 def todo_toggle(request, pk):
+    """Done (done=1) or Undo (done=0). Anything else is a bad request: 400."""
     todo = get_object_or_404(Todo, pk=pk)
-    todo.done = not todo.done
-    todo.save()
+    target = WANTED.get(request.POST.get("done"))
+    if target is None:
+        return HttpResponseBadRequest("done must be 1 or 0")
+    todo.set_done(target)
     return back_to_list(request)
 
 

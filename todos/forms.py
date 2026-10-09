@@ -34,6 +34,16 @@ class TodoForm(forms.ModelForm):
         empty_value=Todo.Priority.MEDIUM,
         initial=Todo.Priority.MEDIUM,
     )
+    # Like priority: a missing or empty repeat is "none". The check "a
+    # repeating to-do needs a due date" is in Todo.clean(), so the add form,
+    # the edit page and the admin all get it.
+    repeat = forms.TypedChoiceField(
+        label="Repeats",
+        choices=Todo.Repeat.choices,
+        required=False,
+        empty_value=Todo.Repeat.NONE,
+        initial=Todo.Repeat.NONE,
+    )
 
     class Meta:
         model = Todo
@@ -42,6 +52,7 @@ class TodoForm(forms.ModelForm):
             "due_date",
             "priority",
             "notes",
+            "repeat",
         ]
         field_classes = {"notes": NotesField}
         widgets = {
