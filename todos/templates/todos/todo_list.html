@@ -23,6 +23,9 @@
     li.done .title { text-decoration: line-through; color: #666; }
     li .due { display: block; color: #666; font-size: 0.9rem; }
     li .repeat { display: block; color: #666; font-size: 0.9rem; }
+    li .progress { display: block; color: #666; font-size: 0.85rem; }
+    /* The steps link is inside .title, so undo the title link style: always underlined, never bold. */
+    li .title .progress a, li.selected .title .progress a { color: inherit; font-weight: normal; text-decoration: underline; }
     li .match-hint { margin-left: 0.5rem; color: #666; font-size: 0.8rem; font-style: italic; }
     li .priority { display: inline-block; font-size: 0.8rem; padding: 0.1rem 0.4rem; border-radius: 0.25rem; white-space: nowrap; }
     li .priority.high { font-weight: bold; color: #8b0000; background: #fde8e8; border: 1px solid #8b0000; }
@@ -105,7 +108,9 @@
       <ul>
         {% for todo in todos %}
           <li id="todo-{{ todo.pk }}" class="{% if todo.done %}done{% endif %}{% if todo == selected %} selected{% endif %}">
-            <span class="title"><a href="{{ select_base }}{{ todo.pk }}#details"{% if todo == selected %} aria-current="true"{% endif %}>{{ todo.title }}</a>{% if q and not todo.title_match %}<small class="match-hint">matches in notes</small>{% endif %}{% if todo.priority != todo.Priority.MEDIUM %} <span class="priority {{ todo.get_priority_display|lower }}">{{ todo.get_priority_display }} priority</span>{% endif %}{% if todo.due_date %}<small class="due">due {{ todo.due_date|date:"j M Y" }}</small>{% endif %}{% if todo.repeats and not todo.done %}<span class="repeat">{{ todo.get_repeat_display }}</span>{% endif %}</span>
+            <span class="title"><a href="{{ select_base }}{{ todo.pk }}#details"{% if todo == selected %} aria-current="true"{% endif %}>{{ todo.title }}</a>{% if q and not todo.title_match %}<small class="match-hint">matches in notes</small>{% endif %}{% if todo.priority != todo.Priority.MEDIUM %} <span class="priority {{ todo.get_priority_display|lower }}">{{ todo.get_priority_display }} priority</span>{% endif %}{% if todo.due_date %}<small class="due">due {{ todo.due_date|date:"j M Y" }}</small>{% endif %}{% if todo.repeats and not todo.done %}<span class="repeat">{{ todo.get_repeat_display }}</span>{% endif %}{% if todo.subtask_count %}<small class="progress"><a href="{% url 'subtask_list' todo.pk %}{{ list_query }}" aria-label="{{ todo.subtask_done_count }} of {{ todo.subtask_count }} steps for {{ todo.title }}">{{ todo.subtask_done_count }} of {{ todo.subtask_count }} steps</a></small>{% endif %}</span>
+            {# The steps line is inside the title block, so on a phone the title keeps the full width. #}
+            {# subtask_count comes from the list query. Never todo.subtasks.count: one query per row. #}
             <a class="edit" href="{% url 'todo_edit' todo.pk %}{{ list_query }}" aria-label="Edit {{ todo.title }}">Edit</a>
             <form method="post" action="{% url 'todo_toggle' todo.pk %}{{ list_query }}">
               {% csrf_token %}
@@ -143,6 +148,8 @@
         {% if selected.repeats %}<dt>Repeats</dt><dd>{{ selected.get_repeat_display }}</dd>{% endif %}
         <dt>Priority</dt><dd>{{ selected.get_priority_display }}</dd>
         <dt>Created</dt><dd>{{ selected.created_at|date:"j M Y" }}</dd>
+        {# The counts come from the list query: no extra query for the pane. #}
+        {% if selected.subtask_count %}<dt>Steps</dt><dd><a href="{% url 'subtask_list' selected.pk %}{{ list_query }}">{{ selected.subtask_done_count }} of {{ selected.subtask_count }} done</a></dd>{% endif %}
         {# Notes: only through Django's escaping. Never |safe here. #}
         {% if selected.notes %}<dt>Notes</dt><dd class="notes">{{ selected.notes|linebreaksbr }}</dd>{% endif %}
       </dl>

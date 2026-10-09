@@ -68,15 +68,27 @@ def page_path(response):
 
 
 class PageButton:
-    """A button that sends its form: its text, and the name/value it adds."""
+    """A button that sends its form: its text, and the name/value it adds.
 
-    def __init__(self, text, name=None, value=""):
+    `label` is its aria-label, or None when it has none.
+    """
+
+    def __init__(self, text, name=None, value="", label=None):
         self.text = text
         self.name = name
         self.value = value
+        self.label = label
+
+    @property
+    def accessible_name(self):
+        """What a screen reader says: the aria-label if there is one, else the text."""
+        return self.label if self.label is not None else self.text
 
     def __repr__(self):
-        return f"PageButton({self.text!r}, name={self.name!r}, value={self.value!r})"
+        return (
+            f"PageButton({self.text!r}, name={self.name!r}, value={self.value!r}, "
+            f"label={self.label!r})"
+        )
 
 
 class PageForm:
@@ -160,7 +172,9 @@ class PageForms(HTMLParser):
         elif tag == "button":
             kind = (attrs.get("type") or "submit").lower()
             if kind == "submit" and not disabled:
-                button = PageButton("", name, attrs.get("value", ""))
+                button = PageButton(
+                    "", name, attrs.get("value", ""), attrs.get("aria-label")
+                )
                 self._form.buttons.append(button)
                 self._button = []
         elif tag == "textarea" and name and not disabled:
@@ -186,7 +200,8 @@ class PageForms(HTMLParser):
         if kind == "submit":
             if not disabled:
                 text = attrs.get("value") or "Submit"
-                self._form.buttons.append(PageButton(text, name, text))
+                label = attrs.get("aria-label")
+                self._form.buttons.append(PageButton(text, name, text, label))
             return
         if kind in ("button", "reset", "image", "file") or not name or disabled:
             return
@@ -374,15 +389,19 @@ def show_date(day):
     return f"{day.day} {day:%b %Y}"
 
 
-def title_element(todo, query="", selected=False, match_hint=False, repeat=""):
+def title_element(
+    todo, query="", selected=False, match_hint=False, repeat="", progress=""
+):
     """The whole <span class="title"> of one row: the link, the search's
     "matches in notes" hint, the priority label (High or Low; Medium has none),
-    the due date and the repeat.
+    the due date, the repeat and the steps progress.
 
     `query` is the list query without the selection, like "?show=active".
     `match_hint` is True when the search matched only the notes.
     `repeat` is the words an OPEN repeating to-do shows, like "Every week";
     "" means no repeat span (a to-do that does not repeat, or a completed one).
+    `progress` is the whole "1 of 3 steps" element (its own line, last in the
+    title block), or "" for a to-do with no steps.
     """
     joiner = "&" if query else "?"
     href = f"/{escape(query)}{joiner}selected={todo.pk}#details"
@@ -400,7 +419,7 @@ def title_element(todo, query="", selected=False, match_hint=False, repeat=""):
     repeat_span = f'<span class="repeat">{repeat}</span>' if repeat else ""
     return (
         f'<span class="title"><a href="{href}"{current}>{escape(todo.title)}</a>'
-        f"{hint}{label}{due}{repeat_span}</span>"
+        f"{hint}{label}{due}{repeat_span}{progress}</span>"
     )
 
 
@@ -426,6 +445,7 @@ def pane_element(
     notes=None,
     edit_url=None,
     repeats=None,
+    steps=None,
 ):
     """The whole details <aside>, exactly as the page must show it.
 
@@ -437,6 +457,8 @@ def pane_element(
     selection included. None builds it from `close_url`, like the page does.
     `repeats` (None: no Repeats row) is the words of the repeat, like
     "Every week". Its row comes right after Due.
+    `steps` (None: no Steps row) is (done, total, href): the row "Steps: 1 of 3
+    done", a link to the steps page. It comes before the notes.
     """
     if edit_url is None:
         query = close_url.removeprefix("/")
@@ -450,6 +472,9 @@ def pane_element(
         ("Created", created),
     ]
     dl = "".join(f"<dt>{name}</dt><dd>{value}</dd>" for name, value in rows)
+    if steps is not None:
+        done, total, href = steps
+        dl += f'<dt>Steps</dt><dd><a href="{escape(href)}">{done} of {total} done</a></dd>'
     if notes is not None:
         lines = "<br>".join(escape(line) for line in notes.split("\n"))
         dl += f'<dt>Notes</dt><dd class="notes">{lines}</dd>'

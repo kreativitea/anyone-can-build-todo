@@ -6,11 +6,13 @@ Done and Undo post the state the person wants: done=1 or done=0.
 from datetime import date
 
 from django.contrib.auth.models import User
+from django.db import connection
 from django.test import TestCase
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
 
-from todos.models import Todo
+from todos.models import Subtask, Todo
 from todos.tests.integration.helpers import (
     page_forms,
     page_without_csrf,
@@ -219,6 +221,17 @@ class DoneAndUndoTests(TestCase):
             "repeat": todo.repeat,
             "_save": "Save",
         }
+        # The steps inline (15): the admin page always sends its management
+        # form, and each step the to-do has, unchanged.
+        steps = list(todo.subtasks.all())
+        data["subtasks-TOTAL_FORMS"] = str(len(steps))
+        data["subtasks-INITIAL_FORMS"] = str(len(steps))
+        for i, step in enumerate(steps):
+            data[f"subtasks-{i}-id"] = str(step.pk)
+            data[f"subtasks-{i}-todo"] = str(todo.pk)
+            data[f"subtasks-{i}-title"] = step.title
+            if step.done:
+                data[f"subtasks-{i}-done"] = "on"
         if todo.done:
             data["done"] = "on"
         data.update(changes)
@@ -572,3 +585,98 @@ class RepeatPaneTests(TestCase):
             close_url="/",
         )
         self.assertContains(response, pane, count=1, html=True)
+
+
+class RepeatingStepsTests(TestCase):
+    """Steps (15) and repeating (19): Done copies the steps, all not done.
+
+    Owner decisions: the steps come back with the next copy; a change to a
+    copy's steps counts as an edit, so Undo keeps that copy.
+    """
+
+    def make_clean(self, steps=(("Kitchen", True), ("Floor", False))):
+        clean = Todo.objects.create(
+            title="Weekly clean", due_date=MONDAY, repeat="weekly"
+        )
+        for title, is_done in steps:
+            Subtask.objects.create(todo=clean, title=title, done=is_done)
+        return clean
+
+    def press(self, todo, wanted):
+        response = self.client.post(done(todo), {"done": wanted})
+        self.assertEqual(response.status_code, 302)
+        todo.refresh_from_db()
+
+    def steps(self, todo):
+        return list(todo.subtasks.values_list("title", "done"))
+
+    def test_done_copies_the_steps_not_done(self):
+        clean = self.make_clean()
+        self.press(clean, "1")
+        copy = clean.next_todo
+        self.assertIsNotNone(copy)
+        self.assertEqual(self.steps(copy), [("Kitchen", False), ("Floor", False)])
+        # The completed one keeps its steps as they were: its history.
+        self.assertEqual(self.steps(clean), [("Kitchen", True), ("Floor", False)])
+
+    def test_done_copies_all_steps_in_one_query(self):
+        counts = []
+        for n in [2, 5]:
+            clean = self.make_clean([(f"Room {i}", False) for i in range(n)])
+            with CaptureQueriesContext(connection) as queries:
+                self.press(clean, "1")
+            counts.append(len(queries))
+            self.assertEqual(clean.next_todo.subtasks.count(), n)
+        self.assertEqual(counts[0], counts[1])
+
+    def test_undo_deletes_a_copy_with_untouched_steps(self):
+        clean = self.make_clean()
+        self.press(clean, "1")
+        self.press(clean, "0")
+        self.assertEqual(list(Todo.objects.all()), [clean])
+        self.assertFalse(clean.done)
+        self.assertEqual(self.steps(clean), [("Kitchen", True), ("Floor", False)])
+        # The copied steps went with the copy (CASCADE).
+        self.assertEqual(Subtask.objects.count(), 2)
+
+    def test_undo_keeps_a_copy_whose_steps_changed(self):
+        def tick_floor(copy):
+            floor = copy.subtasks.get(title="Floor")
+            return reverse("subtask_done", args=[copy.pk, floor.pk]), {"done": "1"}
+
+        def add_bath(copy):
+            return reverse("subtask_add", args=[copy.pk]), {"title": "Bath"}
+
+        def delete_kitchen(copy):
+            kitchen = copy.subtasks.get(title="Kitchen")
+            return reverse("subtask_delete", args=[copy.pk, kitchen.pk]), {}
+
+        cases = [
+            (tick_floor, [("Kitchen", False), ("Floor", True)]),
+            (add_bath, [("Kitchen", False), ("Floor", False), ("Bath", False)]),
+            (delete_kitchen, [("Floor", False)]),
+        ]
+        for change, left in cases:
+            with self.subTest(change=change.__name__):
+                Todo.objects.all().delete()
+                clean = self.make_clean()
+                self.press(clean, "1")
+                copy = clean.next_todo
+                url, data = change(copy)
+                self.assertEqual(self.client.post(url, data).status_code, 302)
+
+                self.press(clean, "0")
+                self.assertFalse(clean.done)
+                self.assertTrue(Todo.objects.filter(pk=copy.pk).exists())
+                self.assertEqual(self.steps(copy), left)
+
+                # Done again on the old one makes no third to-do.
+                self.press(clean, "1")
+                self.assertEqual(Todo.objects.count(), 2)
+
+    def test_done_on_a_todo_without_steps_copies_none(self):
+        clean = self.make_clean(steps=())
+        self.press(clean, "1")
+        self.assertEqual(self.steps(clean.next_todo), [])
+        self.press(clean, "0")
+        self.assertEqual(list(Todo.objects.all()), [clean])

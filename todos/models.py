@@ -1,6 +1,7 @@
 from django.core.exceptions import ValidationError
 from django.core.validators import MaxLengthValidator
 from django.db import models, transaction
+from django.db.models import Count, Q
 from django.utils import timezone
 
 from . import repeat as rp
@@ -17,6 +18,19 @@ class TodoQuerySet(models.QuerySet):
     def completed(self):
         """The to-dos that are done."""
         return self.filter(done=True)
+
+    def with_subtask_progress(self):
+        """Each to-do with its number of steps, and of done steps, in the same query.
+
+        distinct=True counts each step once, even when a later JOIN (like tags)
+        puts the same step on two lines.
+        """
+        return self.annotate(
+            subtask_count=Count("subtasks", distinct=True),
+            subtask_done_count=Count(
+                "subtasks", filter=Q(subtasks__done=True), distinct=True
+            ),
+        )
 
 
 class Todo(models.Model):
@@ -116,6 +130,19 @@ class Todo(models.Model):
         """The next to-do of a repeating one, not saved yet."""
         return Todo(**self.next_values())
 
+    def copy_subtasks_to(self, copy):
+        """Give the saved next copy the same steps, in order, all not done.
+
+        One INSERT for all of them (bulk_create). Only the titles are copied.
+        """
+        Subtask.objects.bulk_create(
+            [Subtask(todo=copy, title=title) for title in self.subtask_titles()]
+        )
+
+    def subtask_titles(self):
+        """The titles of this to-do's steps, oldest first."""
+        return list(self.subtasks.values_list("title", flat=True))
+
     def set_done(self, target):
         """Done (target=True) or Undo (target=False). Does nothing if it is already so.
 
@@ -142,15 +169,40 @@ class Todo(models.Model):
                     except OverflowError:
                         return  # no date after 31 Dec 9999: Done, with no copy
                     copy.save()
+                    # Same transaction: the copy and its steps, or neither.
+                    fresh.copy_subtasks_to(copy)
                     Todo.objects.filter(pk=fresh.pk).update(next_todo=copy)
             elif fresh.next_todo_id is not None:
                 # The copy's own state decides, in one conditional DELETE.
                 # Never build the copy again from the original: the original
                 # may have changed since Done (even its repeat).
-                # Feature 15: changing a copy's subtasks must also count as edited.
+                # A change to the copy's steps sets its `edited` (the step views).
                 Todo.objects.filter(
                     pk=fresh.next_todo_id,
                     done=False,
                     next_todo=None,
                     edited=False,
                 ).delete()  # SET_NULL empties fresh.next_todo
+
+
+class SubtaskQuerySet(models.QuerySet):
+    """Queries for steps. Empty for now; later step queries go here."""
+
+
+class Subtask(models.Model):
+    """A step inside a to-do. On the page it is called a "step"."""
+
+    # CASCADE: when a to-do is deleted, its steps are deleted too.
+    todo = models.ForeignKey(Todo, on_delete=models.CASCADE, related_name="subtasks")
+    title = models.CharField(max_length=200)
+    done = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    objects = SubtaskQuerySet.as_manager()
+
+    class Meta:
+        # Oldest first. The id breaks a tie when two steps have the same time.
+        ordering = ["created_at", "pk"]
+
+    def __str__(self):
+        return self.title

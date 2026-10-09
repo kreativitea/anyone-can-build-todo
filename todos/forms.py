@@ -1,6 +1,6 @@
 from django import forms
 
-from .models import Todo
+from .models import Subtask, Todo
 
 
 class NotesField(forms.CharField):
@@ -85,6 +85,23 @@ class TodoForm(forms.ModelForm):
         if self["notes"].errors:
             return True
         return bool(getattr(self, "cleaned_data", {}).get("notes"))
+
+
+class SubtaskForm(forms.ModelForm):
+    """The "New step" box on the steps page. Django checks: not empty, at most 200."""
+
+    class Meta:
+        model = Subtask
+        fields = [
+            "title",
+        ]
+        labels = {
+            "title": "New step",
+        }
+        widgets = {
+            # The steps page is for adding steps, so the box is ready to type in.
+            "title": forms.TextInput(attrs={"autofocus": True}),
+        }
 
 
 class TodoEditForm(TodoForm):

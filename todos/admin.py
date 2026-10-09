@@ -2,7 +2,15 @@ from django.contrib import admin
 from django.db import models
 
 from .forms import NotesField
-from .models import Todo
+from .models import Subtask, Todo
+
+
+class SubtaskInline(admin.TabularInline):
+    """A to-do's steps, as a small table on the to-do's admin page."""
+
+    model = Subtask
+    extra = 0
+    fields = ["title", "done"]
 
 
 @admin.register(Todo)
@@ -18,3 +26,6 @@ class TodoAdmin(admin.ModelAdmin):
         if change:
             obj.edited = True
         super().save_model(request, obj, form, change)
+
+    # A step is always seen with its to-do, so Subtask is not registered alone.
+    inlines = [SubtaskInline]
