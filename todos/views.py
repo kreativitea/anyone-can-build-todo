@@ -4,8 +4,8 @@ from typing import NamedTuple
 from urllib.parse import urlencode
 
 from django.db import DatabaseError, transaction
-from django.http import Http404
 from django.db.models import Q
+from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_http_methods, require_POST
@@ -151,14 +151,22 @@ def search_words(q):
 
 
 def search_todos(todos, params):
-    """Only the to-dos whose title contains the search word, as typed or in its NFKC form."""
+    """Only the to-dos whose title or notes contain the search word, as typed
+    or in its NFKC form.
+
+    With a search, each to-do also gets `title_match`: True when the title
+    matched. The page shows "matches in notes" when it is False. The database
+    works it out in the same query (an annotation).
+    """
     q = params.get("q")
     if not q:
         return todos
-    match = Q()
+    title_match = Q()
+    notes_match = Q()
     for word in search_words(q):
-        match |= Q(title__icontains=word)
-    return todos.filter(match)
+        title_match |= Q(title__icontains=word)
+        notes_match |= Q(notes__icontains=word)
+    return todos.filter(title_match | notes_match).annotate(title_match=title_match)
 
 
 def filter_links(params):

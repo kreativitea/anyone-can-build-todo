@@ -1,7 +1,6 @@
 # Plan: search the list
 
-Status: **approved, in progress.** Built without the work after the rebase; see "What happened"
-at the end.
+Status: **done.** Built, reviewed, and rebased on 6, 21, 7 and 4; see "What happened" at the end.
 
 This is feature 10, the last one in wave 2 of [the rollout plan](feature-rollout.md). The merge
 order in wave 2 is: 6 priority → 21 details pane → 7 notes → 4 edit → **10 search** (search is
@@ -757,7 +756,8 @@ deliberate bugs, which were then taken out:
 After the review fixes: `make test` (unit 22, integration 85), `make test-cuj` (1) and
 `make check` all pass.
 
-**Not done yet: the work after the rebase on 6, 21, 7 and 4.**
+**The work after the rebase on 6, 21, 7 and 4** (this list was written before the rebase; all of
+it is now done, see "After the rebase" below).
 
 - Keep every `page_context` key and every part of the page from 6, 21, 7 and 4.
 - Search the notes too: `Q(title__icontains=word) | Q(notes__icontains=word)`; change the
@@ -777,3 +777,78 @@ After the review fixes: `make test` (unit 22, integration 85), `make test-cuj` (
   (decided by the orchestrator), the positive checks **and** the `count=0` checks. After 21, a raw
   `<span class="title">X</span>` is never on the page, so a `count=0` check on it would pass with
   no meaning. Replace the `title(text)` helper in `test_search.py`.
+
+### After the rebase
+
+The branch was rebased on `main` at 918212b (6 priority, 21 details pane, 7 notes, 4 edit, and
+the change that made the journey tests use Django's test client instead of Playwright). The four
+search commits were kept.
+
+**The clashes**, each fixed by keeping both sides:
+
+- `test_list_params.py`: both sides added tests at the end. Both were kept.
+- `views.py`: the imports; in `list_params` the `q` check goes **before** `selected` (which stays
+  the last key); in `page_context` the order is filter → search → `selected_todo` (last), and
+  `without_q` is worked out **after** a hidden selection is dropped, so the search form and
+  "Clear search" never keep a selection that is not on the page. Every key from both sides is kept.
+- `todo_list.html`: `main`'s version (it now extends `base.html`), with the search form put back
+  between the add form and the filter links, the search CSS in the page's `{% block style %}`, the
+  no-match message, and the page title in the `{% block title %}`:
+  `{% if q %}Search: {{ q }} – {% endif %}To-do list`.
+- `AGENTS.md`: `main`'s rows, with the search sentences added again.
+
+After the rebase, 18 search tests failed, as expected: they checked a hand-written
+`<span class="title">Buy milk</span>`, and titles are links now.
+
+**Tests first** (one commit, before any code change):
+
+- Every title check in `test_search.py` now goes through `assert_shown`: it compares
+  `page_parts(response).titles` with the exact list of titles, in order (so no other to-do is
+  shown), and each shown title with the whole `title_element(todo, list_query, match_hint=...)`.
+  The old `title(text)` helper is gone.
+- `helpers.py`: `title_element` has a new keyword, `match_hint=False`. The hint goes right after
+  the title link, before the priority label.
+- New tests: `test_search_finds_words_only_in_the_notes`, `test_wide_letters_find_words_in_the_notes`,
+  `test_notes_only_match_shows_a_hint` (a notes-only match has the hint; a title match has none;
+  with no search there is never a hint), `test_edit_link_keeps_the_search`,
+  `test_edit_page_keeps_the_search`, `test_search_form_keeps_the_selected_todo`,
+  `test_search_that_hides_the_selected_todo_closes_the_pane`, `test_a_selected_result_opens_the_pane`,
+  `test_search_costs_no_extra_query`, the edit save in `test_actions_go_back_to_the_search`, and the
+  unit test `test_selected_stays_after_the_search`.
+
+That run: 223 tests, 3 failures, all for the right reason: the notes were not searched
+(`[] != ['Shopping']`, and `Shopping` missing from the list with the hint). The other new tests
+passed at once, because 21 and 4 already use `list_params` and `list_query`; each was then shown
+failing against its deliberate bug.
+
+**The code.** `search_todos` looks in the title **or** the notes, for each word from
+`search_words`, and, only when there is a search, adds `annotate(title_match=...)` with the same OR
+of `Q(title__icontains=word)`. The template adds
+`{% if q and not todo.title_match %}<small class="match-hint">matches in notes</small>{% endif %}`
+right after the title link, with a little CSS (grey, small, italic). No migration
+(`makemigrations --check`: "No changes detected").
+
+**Each deliberate bug**, put in for a moment and taken out (`git diff` showed only the real change):
+
+| Deliberate bug | Test | Result |
+|---|---|---|
+| the notes are not searched | `test_search_finds_words_only_in_the_notes`, `test_wide_letters_find_words_in_the_notes` | failed: `[] != ['Shopping']` |
+| no hint on the row | `test_notes_only_match_shows_a_hint` | failed: no `Shopping` element with the hint |
+| the hint without `q and` | `test_notes_only_match_shows_a_hint` | failed in "no search": every row had a hint |
+| the hint from a second query | `test_search_costs_no_extra_query` | failed: `5 != 4` queries |
+| the Edit link without `{{ list_query }}` | `test_edit_link_keeps_the_search` | failed |
+| Cancel built without the list parameters | `test_edit_page_keeps_the_search` | failed: no `<a href="/?show=active&amp;q=milk">Cancel</a>` |
+| `search_keeps` from `show` only | `test_search_form_keeps_the_selected_todo` | failed: no hidden `selected` input |
+| search runs after `selected_todo` | `test_search_that_hides_the_selected_todo_closes_the_pane` | failed: `['Details'] != []` |
+| the `q` check after `selected` | `test_selected_stays_after_the_search` | failed: `['show', 'selected', 'q']` |
+
+**By eye.** Headless Chrome at 1280 wide, with sample to-dos: `/?q=milk` shows `Buy milk` (title
+match, High priority, due date), `Shopping` with a grey `matches in notes`, and the completed
+`Milk the cow`; `Call home` and `牛乳を買う` are hidden; the count still says `4 items left`.
+`/?q=milk&selected=<Shopping>` shows the same list with `Shopping` selected and the pane on the
+right with its notes (`milk and eggs`, `bread for the weekend`).
+
+After the rebase work: `make test` (unit 68, integration 155), `make test-cuj` (3) and
+`make check` (226 tests, "No changes detected") all pass. The first `make check` run sorted the
+imports in `views.py` that the clash fix had left out of order; the second run passed with no
+change.
