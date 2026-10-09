@@ -456,3 +456,39 @@ commit check passed, `makemigrations --check`: "No changes detected", 246 tests 
   list is Call the bank, Pay rent.
 - A phone width could not be checked this way: headless Chrome does not make its window narrower
   than about 500 pixels, so the picture is cut. The sort row has `flex-wrap`, like the add form.
+
+### After the code review
+
+An adversarial reviewer found no blockers, but 7 of 19 deliberate bugs were not caught by any
+test. These commits fix that, and two small things on the page:
+
+- **New tests, each shown failing against its deliberate bug first** (the bug was then put back):
+
+  | Test | The deliberate bug it catches |
+  |---|---|
+  | `test_pane_keeps_the_sort` (the whole pane, with `pane_element`) | Close drops `sort`; the pane's Edit link drops `sort` |
+  | `test_edit_page_cancel_keeps_the_sort` | the edit page's Cancel drops `sort` |
+  | `test_every_sort_is_one_list_query` | the priority sort done with a second query (5 queries, not 4); the priority sort done in Python with `sorted()` |
+  | `test_due_and_priority_ties_keep_date_added_order` | `created_at` removed from the `due` row |
+  | `test_priority_and_due_ties_keep_date_added_order` | `created_at` removed from the `priority` row |
+  | `test_default_is_oldest_first` (now with `make_earlier`, so id order and date-added order disagree) | `created_at` removed from the `created` row |
+  | `test_sort_row_stays_when_the_pane_is_open` | no sort links when a to-do is selected |
+
+- **`sorted()` costs no extra query**, so the query count alone cannot see it. The same test also
+  checks that the page's `todos` is still a database `QuerySet`: `sorted()` makes it a Python
+  list.
+- **"Sort by" was read twice** by a screen reader: once as the visible text, once as the nav's
+  `aria-label`. Now the text is `<span id="sort-label">Sort by:</span>`, and the nav has
+  `aria-labelledby="sort-label"`, so the visible words are the name.
+- **The filter row has a visible label too** (orchestrator decision): `<span id="filter-label">
+  Show:</span>` with `aria-labelledby="filter-label"`, in place of `aria-label="Filter to-dos"`.
+  The two rows now look different. The filter's exact `<nav>` in `test_filter.py` changed with
+  it. The filter row also got `flex-wrap: wrap`, like the sort row, so it can wrap on a narrow
+  screen.
+- Before the template change, the label tests failed as expected (3 filter tests, 3 sort tests:
+  the old `<nav>` markup). After: `make test` 249 tests OK, `make test-cuj` 3 OK, `make check`
+  all passed, "No changes detected", 252 tests OK.
+- **Checked by eye** at 1280 wide: "Show: All · Active · Completed" and "Sort by: Date added ·
+  Due date · Priority · Title" are two rows, each with its plain label, and the chosen link bold.
+  With a to-do selected (`/?show=active&sort=due&selected=<id>`) the pane is on the right and both
+  rows stay. The phone width is checked by the orchestrator with a real mobile viewport.
