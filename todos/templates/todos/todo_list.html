@@ -114,7 +114,7 @@
       {# Edit (4): the pane's Edit link goes here, before Close. #}
       <p class="details-actions"><a href="{{ close_url }}#todo-{{ selected.pk }}">Close</a></p>
     </aside>
-    {% elif has_todos %}
+    {% elif todos %}
     <p class="pane-hint">Click a to-do's title to see its details.</p>
     {% endif %}
   </div>

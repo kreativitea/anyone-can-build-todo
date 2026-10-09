@@ -687,6 +687,20 @@ The builder followed the plan. These are the places where it did something diffe
      reached with Tab is underlined and has the normal blue focus ring; the done title (Call home)
      is still crossed out and grey.
 
+9. **The code review** (no blockers) asked for four more checks. Each new check was seen failing
+   against its bug, and the bug was put back:
+   - `test_close_keeps_the_filter`: `/?show=active&selected=<milk>` has Close to `/?show=active`.
+     Bug: `close_url` without the list query.
+   - `test_selected_shows_the_pane_and_marks_the_row` also checks that the hint is **not** there.
+     Bug: the hint in its own `{% if has_todos %}`, so it is drawn next to the pane.
+   - `test_title_is_escaped_in_the_pane` also checks the row's whole title link, escaped. Bug:
+     `{{ todo.title|safe }}` in the row.
+   - **A change:** the hint now needs `{% elif todos %}` (the list **on the page**), not
+     `has_todos` (the whole table). On an empty filter there is no title to click, so no hint.
+     `test_no_hint_when_the_shown_list_is_empty` failed before the change for the empty filter
+     (the hint was there); the empty table already had no hint. `todos` is already loaded by the
+     list loop above it, so there is no extra query (the query test still passes).
+
 ### After the rebase on priority (6) and edit (4)
 
 - **Priority (6):** add `<dt>Priority</dt><dd>{{ selected.get_priority_display }}</dd>` after Due
