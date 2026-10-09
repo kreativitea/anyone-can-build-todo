@@ -6,6 +6,9 @@ so the tests can compare whole things instead of searching for a few words.
 
 import re
 from html.parser import HTMLParser
+from typing import NamedTuple
+
+from django.utils.html import escape
 
 CSRF_INPUT = re.compile(
     r'<input type="hidden" name="csrfmiddlewaretoken" value="[^"]*">'
@@ -239,16 +242,27 @@ def page_forms(response):
     return PageForms(response.content.decode(), page_path(response)).forms
 
 
+class Row(NamedTuple):
+    """One <li> of the list: its `id`, its classes, and the title in it."""
+
+    id: str
+    classes: list
+    title: str
+
+
 class PageParts(HTMLParser):
     """Reads the parts of the page the tests compare exactly.
 
     `post_actions` is the `action` of every form with method="post", read by
     `PageForms`, so a form with no action counts as the page's own address.
     `titles` is the title of every to-do shown, in order: the text of each
-    <span class="title"> before any tag inside it (the due date is a <small>
-    inside the span, and is not part of the title).
+    <span class="title">, and of an <a> directly inside it (the title link).
+    Other tags inside the span (the due date is a <small>) are not the title.
     `current_links` is the text of every link with aria-current="page". A test
     that compares it to one name proves that no OTHER link is marked too.
+    `selected_titles` is the text of every title link with aria-current="true":
+    the selected to-do. Sort links use "true" too, but they are not titles.
+    `panes` is the aria-label of every <aside>, in order. [] means "no pane".
     """
 
     def __init__(self, html, page_path=""):
@@ -260,28 +274,109 @@ class PageParts(HTMLParser):
         ]
         self.titles = []
         self.current_links = []
-        self._collect = None  # the list that the next text goes into
+        self.selected_titles = []
+        self.panes = []
+        self.rows = []
+        self._collect = []  # the lists that the next text goes into
+        self._row = None  # the <li> we are in: [id, classes]
+        self._title_depth = None  # tags open inside the title span, or None
         self.feed(html)
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
         # Text inside a tag within the title (like the due date) is not the title.
-        self._collect = None
+        self._collect = []
+        if self._title_depth is not None:
+            self._title_depth += 1
+            if tag == "a" and self._title_depth == 1:
+                self._collect = [self.titles]
+                if attrs.get("aria-current") == "true":
+                    self.selected_titles.append("")
+                    self._collect.append(self.selected_titles)
+            return
+        if tag == "li":
+            self._row = [attrs.get("id"), (attrs.get("class") or "").split()]
         if tag == "span" and attrs.get("class") == "title":
             self.titles.append("")
-            self._collect = self.titles
+            self._collect = [self.titles]
+            self._title_depth = 0
         if tag == "a" and attrs.get("aria-current") == "page":
             self.current_links.append("")
-            self._collect = self.current_links
+            self._collect = [self.current_links]
+        if tag == "aside":
+            self.panes.append(attrs.get("aria-label"))
 
     def handle_endtag(self, tag):
-        self._collect = None
+        self._collect = []
+        if self._title_depth is not None:
+            if self._title_depth > 0:
+                self._title_depth -= 1
+                return
+            self._title_depth = None
+            if self._row is not None:
+                self.rows.append(Row(*self._row, self.titles[-1]))
+        if tag == "li":
+            self._row = None
 
     def handle_data(self, data):
-        if self._collect is not None:
-            self._collect[-1] += data.strip()
+        for target in self._collect:
+            target[-1] += data.strip()
+
+    def row(self, title):
+        """The one row whose title is exactly `title`."""
+        found = [row for row in self.rows if row.title == title]
+        if len(found) != 1:
+            raise AssertionError(f"{len(found)} rows titled {title!r}, not 1")
+        return found[0]
 
 
 def page_parts(response):
     """The parts of the page in `response` that tests compare exactly."""
     return PageParts(response.content.decode(), page_path(response))
+
+
+def show_date(day):
+    """A date as the page shows it: "5 Oct 2026" (no 0 before the day)."""
+    return f"{day.day} {day:%b %Y}"
+
+
+def title_element(todo, query="", selected=False):
+    """The whole <span class="title"> of one row: the link and the due date.
+
+    `query` is the list query without the selection, like "?show=active".
+    """
+    joiner = "&" if query else "?"
+    href = f"/{query}{joiner}selected={todo.pk}#details"
+    current = ' aria-current="true"' if selected else ""
+    due = (
+        f'<small class="due">due {show_date(todo.due_date)}</small>'
+        if todo.due_date
+        else ""
+    )
+    return (
+        f'<span class="title"><a href="{href}"{current}>{escape(todo.title)}</a>'
+        f"{due}</span>"
+    )
+
+
+def pane_element(
+    todo, *, status="Active", due="No due date", priority=None, created, close_url
+):
+    """The whole details <aside>, exactly as the page must show it.
+
+    `close_url` is the list address without the selection, like "/"; the
+    builder adds "#todo-<pk>". `priority=None` means no Priority row: priority
+    (feature 6) is not on main yet.
+    """
+    rows = [("Status", status), ("Due", due)]
+    if priority is not None:
+        rows.append(("Priority", priority))
+    rows.append(("Created", created))
+    dl = "".join(f"<dt>{name}</dt><dd>{value}</dd>" for name, value in rows)
+    return (
+        '<aside class="details" id="details" tabindex="-1" aria-label="Details">'
+        f"<h2>{escape(todo.title)}</h2>"
+        f"<dl>{dl}</dl>"
+        f'<p class="details-actions"><a href="{close_url}#todo-{todo.pk}">Close</a></p>'
+        "</aside>"
+    )
