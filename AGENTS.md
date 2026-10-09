@@ -23,8 +23,8 @@ in a SQLite database, the file `db.sqlite3`, which is not in git.
 | `todos/templates/todos/todo_list.html` | The one page: the add form (drawn by Django from `TodoForm`), the filter links, the list, and under it how many to-dos are left and the "Delete N completed to-dos" button. |
 | `todos/tests/unit/` | Unit tests: one piece alone, like the model, with no request. |
 | `todos/tests/integration/` | Integration tests: requests through Django's test client, from the URL to the database. |
-| `todos/tests/integration/helpers.py` | Helpers the integration tests share: `page_parts` (the titles shown, the `POST` form actions, the chosen filter link), `page_without_csrf`, and `list_footer` (the whole footer, exactly). |
-| `todos/tests/cuj/` | CUJ tests (critical user journeys): a whole journey in a real browser, with Playwright. |
+| `todos/tests/integration/helpers.py` | Helpers the integration tests share: `page_parts` (the titles shown, the `POST` form actions, the chosen filter link), `page_forms` (every form with its address, fields and button, so a test can send it like a browser), `page_without_csrf`, and `list_footer` (the whole footer, exactly). |
+| `todos/tests/cuj/` | CUJ tests (critical user journeys): a whole journey through Django's test client. Each step reads the form from the page, posts it with CSRF checks on, and follows the redirect. |
 | `config/test_runner.py` | Runs the tests like Django does, then prints a summary for each level. |
 | `todos/migrations/` | Made by Django from `models.py`. Never edit these by hand. |
 | `pyproject.toml`, `uv.lock` | The packages this project uses, and their exact versions. |
@@ -36,10 +36,10 @@ in a SQLite database, the file `db.sqlite3`, which is not in git.
 This project uses **uv** to install Python and the packages. Run every Python command through
 `uv run`, so it uses this project's packages:
 
-- `make setup` — install everything, create the database, download the test browser, turn on the commit checks
+- `make setup` — install everything, create the database, turn on the commit checks
 - `make run` — start the server at <http://127.0.0.1:8000>
 - `make test` — run the unit and integration tests, in parallel (fast)
-- `make test-cuj` — run the CUJ tests in a real browser (slow)
+- `make test-cuj` — run the CUJ tests: whole journeys through the test client
 - `make lint` / `make format` — Ruff: find mistakes, and rewrite code in the standard style
 - `make check` — every commit check on every file, a check that no migration is missing or
   clashing, then every test
@@ -59,5 +59,7 @@ Add a package with `uv add <name>`, never with `pip install`. After changing `mo
   ends with `back_to_list(request)`. Then the person stays on the same filter.
 - **Put a test in the lowest level that can catch the bug.** Its folder sets the level: `unit`,
   `integration` or `cuj`. Add a CUJ test only for a new journey a person takes.
+- **No real-browser tests.** Things only a browser shows (CSS, layout, focus) are checked by eye
+  with a screenshot.
 - **Add or change a test with every change in behavior**, and show the person the test failing
   before the fix and passing after.

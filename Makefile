@@ -6,7 +6,7 @@ help:
 	@echo "make setup            install Python and the packages, create the database, turn on the commit checks"
 	@echo "make run              start the server, then open http://127.0.0.1:8000"
 	@echo "make test             run the unit and integration tests (fast)"
-	@echo "make test-cuj         run the CUJ test in a real browser (slow)"
+	@echo "make test-cuj         run the CUJ tests: whole journeys through the test client"
 	@echo "make lint             look for mistakes and style problems (ruff check)"
 	@echo "make format           rewrite the code in the standard style (ruff format)"
 	@echo "make check            everything the commit checks run, on every file, plus the tests"
@@ -17,7 +17,6 @@ help:
 setup:
 	uv sync
 	uv run python manage.py migrate
-	uv run playwright install chromium
 	uv run pre-commit install
 
 run:

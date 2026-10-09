@@ -39,20 +39,13 @@ uv sync
 uv run python manage.py migrate
 ```
 
-**5. Download the test browser.** One test uses a real browser, Chromium, to use the site like a
-person. This downloads it (about 100 MB), outside this folder.
-
-```bash
-uv run playwright install chromium
-```
-
-**6. Turn on the commit checks.** From now on, every `git commit` checks your code first.
+**5. Turn on the commit checks.** From now on, every `git commit` checks your code first.
 
 ```bash
 uv run pre-commit install
 ```
 
-**7. Start the server.**
+**6. Start the server.**
 
 ```bash
 uv run python manage.py runserver
@@ -60,7 +53,7 @@ uv run python manage.py runserver
 
 Open <http://127.0.0.1:8000/>. Press `Ctrl+C` in the terminal to stop the server.
 
-**8. Run the tests.**
+**7. Run the tests.**
 
 ```bash
 uv run python manage.py test
@@ -68,10 +61,12 @@ uv run python manage.py test
 
 You should see `OK`, then one line for each level of tests, like `Unit: 3 passed`. There are three
 levels: **unit** tests check one piece alone, **integration** tests send requests to the site, and
-**CUJ** (critical user journey) tests use the site in a real browser.
+**CUJ** (critical user journey) tests follow a whole journey a person takes, from start to finish.
+All of them use Django's test client, a pretend browser inside the test, so no real browser is
+needed.
 
-On a Mac, `make` does the same in fewer words: `make setup` is steps 3 to 6, `make run` is step 7.
-`make test` runs the fast tests, `make test-cuj` runs the browser test, and `make check` runs
+On a Mac, `make` does the same in fewer words: `make setup` is steps 3 to 5, `make run` is step 6.
+`make test` runs the fast tests, `make test-cuj` runs the journey tests, and `make check` runs
 everything. `make help` lists the rest.
 
 ## Checks
