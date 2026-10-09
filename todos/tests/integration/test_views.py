@@ -20,6 +20,22 @@ class TodoTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Nothing to do yet")
 
+    def test_add_form_fields_have_accessible_names(self):
+        # A screen reader reads these names. The old browser journey found the
+        # fields by them, so a test must still check them exactly.
+        page = page_without_csrf(self.client.get(reverse("todo_list")))
+        title = (
+            '<input type="text" name="title" aria-label="New to-do" '
+            'placeholder="What needs doing?" autofocus maxlength="200" required '
+            'id="id_title">'
+        )
+        due_date = (
+            '<label for="id_due_date">Due date (optional):</label>'
+            '<input type="date" name="due_date" id="id_due_date">'
+        )
+        self.assertInHTML(title, page, count=1)
+        self.assertInHTML(due_date, page, count=1)
+
     def test_add_a_todo(self):
         self.client.post(reverse("todo_add"), {"title": "Buy milk"})
         self.assertEqual(Todo.objects.get().title, "Buy milk")
