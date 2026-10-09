@@ -3,6 +3,18 @@ from django import forms
 from .models import Todo
 
 
+class NotesField(forms.CharField):
+    """A text field that counts a line break as one character, like the browser does.
+
+    A browser sends a line break as "\\r\\n" (2 characters), but its maxlength counts
+    it as 1. to_python runs before the length check, so we change "\\r\\n" to "\\n" here.
+    """
+
+    def to_python(self, value):
+        value = super().to_python(value)
+        return value.replace("\r\n", "\n").replace("\r", "\n")
+
+
 class TodoForm(forms.ModelForm):
     due_date = forms.DateField(
         label="Due date (optional)",
@@ -29,7 +41,9 @@ class TodoForm(forms.ModelForm):
             "title",
             "due_date",
             "priority",
+            "notes",
         ]
+        field_classes = {"notes": NotesField}
         widgets = {
             "title": forms.TextInput(
                 attrs={
@@ -38,4 +52,11 @@ class TodoForm(forms.ModelForm):
                     "autofocus": True,
                 }
             ),
+            "notes": forms.Textarea(attrs={"rows": 3, "aria-label": "Notes"}),
         }
+
+    def notes_box_open(self):
+        """Open the folded notes box when there are notes to see, or an error about them."""
+        if self["notes"].errors:
+            return True
+        return bool(getattr(self, "cleaned_data", {}).get("notes"))

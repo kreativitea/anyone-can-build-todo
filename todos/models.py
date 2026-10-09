@@ -1,4 +1,8 @@
+from django.core.validators import MaxLengthValidator
 from django.db import models
+
+# The longest notes a to-do may have. Form, model and tests all use this name.
+NOTES_LIMIT = 500
 
 
 class TodoQuerySet(models.QuerySet):
@@ -25,6 +29,12 @@ class Todo(models.Model):
     priority = models.PositiveSmallIntegerField(
         choices=Priority.choices,
         default=Priority.MEDIUM,
+    )
+    notes = models.TextField(
+        blank=True,
+        default="",
+        max_length=NOTES_LIMIT,
+        validators=[MaxLengthValidator(NOTES_LIMIT)],
     )
     created_at = models.DateTimeField(auto_now_add=True)
 

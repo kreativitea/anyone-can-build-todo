@@ -1,6 +1,7 @@
 # Plan: notes on a to-do (feature 7)
 
-Status: **approved.** Approved by the owner (third version).
+Status: **approved, in progress.** The parts that do not need 6 (priority) and 21 (details pane)
+are built; the rest waits for the rebase. See "What happened".
 
 The first version was checked by an adversarial review (a reviewer whose job is to find what is
 wrong), on Django 5.2.17. Every finding is fixed below. The third version follows an owner change:
@@ -602,3 +603,57 @@ with `notes=None` is unchanged), and the CUJ test with no change.
   wrap onto its own row. That is acceptable.
 - **Closed owner question.** "Full notes or a preview on the list?" is answered by the owner: notes
   are not on the list at all, only in full in the pane.
+
+## What happened
+
+The builder followed the plan for the parts that do not need 6 (priority) and 21 (details pane).
+Those two were still being built, so the branch starts from `main` **without** them. These are the
+places where it did something a little different, and why.
+
+1. **The starting point.** `main` had wave 1 only: no `priority`, no pane, no `pane_element`, and
+   no `test_forms.py`. So this branch builds now: the model field, `NOTES_LIMIT` and the
+   validator; the migration; `NotesField`; the `notes` field in `TodoForm` (fields `title`,
+   `due_date`, `notes`, one per line); the folded `Notes (optional)` box with `notes_box_open()`;
+   the CSS for the add form; the admin's `formfield_overrides`; and their tests.
+2. **Waiting for the rebase on 6 and 21** (the person who rebases does these):
+   - the `Notes` row in the pane (the `{% if selected.notes %}…{% endif %}` line);
+   - in `helpers.py`: `pane_element(..., notes=None)`, and `pane_notes` and `pane_tags` in
+     `PageParts`; and `pane_for()` in `test_notes.py`;
+   - the pane tests: `test_pane_shows_notes_with_line_breaks`, `test_pane_notes_are_escaped`,
+     `test_notes_are_not_on_the_list`, `test_pane_without_notes_has_no_notes_row`, and their
+     deliberate bugs (no `{% if %}`, `|safe`, notes on the row);
+   - `"priority"` goes back between `"due_date"` and `"notes"` in `fields`; the notes box goes
+     after the priority box;
+   - `test_forms.py` is new here, and 6 also makes it: keep both classes;
+   - the migration is made again by the merge queue (after 6's migration);
+   - `AGENTS.md`: the template row also says "the details pane shows the notes", and the models
+     row lists `priority` before `notes`.
+   - The three tests for feature 4 (edit) stay in "For feature 4 (edit)": feature 4 adds them.
+3. **"The notes box is open" is checked with the whole `<details>` element**, with
+   `assertContains(..., html=True)`: the summary, the error list (if any) and the exact text box,
+   inside `<details class="add-notes" open>` or `<details class="add-notes">`. This is one exact
+   element, so the open and the closed box can not be confused. It needed no new `PageParts` part,
+   so `helpers.py` (which 21 changes) is not touched before the rebase.
+4. **No real-browser test** (owner decision): the CUJ test was not changed. It still passes.
+5. **One more deliberate bug**, not in the plan's table: the template without
+   `{% if form.notes_box_open %} open{% endif %}`. `test_bad_date_keeps_the_notes` and
+   `test_notes_over_the_limit_are_not_added` failed. It was put back.
+6. **Step 9 (look at the page by hand)** was not done by the builder agent: it can not see a
+   browser. The CSS for the add form is checked by eye after the rebase, with the pane.
+
+Results:
+
+- **Before the code:** `test_admin.py` failed with one `ImportError` (no `NotesField`); the two
+  model tests failed with `AttributeError` / `TypeError` (no `notes`); the five form tests failed
+  with `KeyError: 'notes'` or `AttributeError` (no `notes_box_open`), and the 501-character case
+  with `AssertionError` (the form ignored `notes`); the six integration tests failed: the to-do
+  had no `notes`, the over-the-limit add was saved (302, not 200), and the page had no notes box.
+- **Deliberate bugs:** no `formfield_overrides` → `test_admin_notes_count_a_line_break_once`
+  failed; no `.replace(...)` → `test_line_break_becomes_one_character`, `test_notes_limit` (the
+  line-break case) and `test_add_a_todo_with_notes` failed; no `validators` →
+  `test_full_clean_checks_the_notes_limit` failed. Each was put back.
+- **The migration on old data:** with three to-dos made before `0003_todo_notes`, `migrate` ran
+  with no question, the three to-dos were kept, and every one has `notes == ""`.
+  `makemigrations --check` says "No changes detected".
+- **After the code:** `make test` (Integration 70, Unit 20), `make test-cuj` (CUJ 1) and
+  `make check` all pass.
