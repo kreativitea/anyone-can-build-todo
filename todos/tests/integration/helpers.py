@@ -268,6 +268,7 @@ class PageParts(HTMLParser):
     None means there is no notes row.
     `pane_tags` is the name of every element inside the pane <aside>, in
     order, like ["h2", "dl", "dt", ...]. [] means "no pane".
+    `html_lang` is the `lang` of the <html> element (None if it has none).
     """
 
     def __init__(self, html, page_path=""):
@@ -277,6 +278,7 @@ class PageParts(HTMLParser):
             for form in PageForms(html, page_path).forms
             if form.method == "post"
         ]
+        self.html_lang = None
         self.titles = []
         self.current_links = []
         self.selected_titles = []
@@ -294,6 +296,8 @@ class PageParts(HTMLParser):
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
         self._pane_start(tag, attrs)
+        if tag == "html":
+            self.html_lang = attrs.get("lang")
         # Text inside a tag within the title (like the due date) is not the title.
         self._collect = []
         if self._title_depth is not None:
@@ -403,6 +407,7 @@ def pane_element(
     created,
     close_url,
     notes=None,
+    edit_url=None,
 ):
     """The whole details <aside>, exactly as the page must show it.
 
@@ -410,7 +415,13 @@ def pane_element(
     builder adds "#todo-<pk>". The pane shows every priority, Medium too.
     `notes` (None: no notes row) is plain text: each line is escaped, and the
     lines are joined with <br>, after the Created row.
+    `edit_url` is the pane's Edit link: the edit page with the same list query,
+    selection included. None builds it from `close_url`, like the page does.
     """
+    if edit_url is None:
+        query = close_url.removeprefix("/")
+        joiner = "&" if query else "?"
+        edit_url = f"/{todo.pk}/edit/{query}{joiner}selected={todo.pk}"
     rows = [
         ("Status", status),
         ("Due", due),
@@ -425,6 +436,51 @@ def pane_element(
         '<aside class="details" id="details" tabindex="-1" aria-label="Details">'
         f"<h2>{escape(todo.title)}</h2>"
         f"<dl>{dl}</dl>"
-        f'<p class="details-actions"><a href="{close_url}#todo-{todo.pk}">Close</a></p>'
+        f'<p class="details-actions"><a href="{escape(edit_url)}">Edit</a> '
+        f'<a href="{close_url}#todo-{todo.pk}">Close</a></p>'
         "</aside>"
     )
+
+
+class PageLinks(HTMLParser):
+    """Reads every link on the page: its accessible name and its address.
+
+    The name is the `aria-label` when the link has one (like a screen reader
+    says it), else its text with the spaces made one.
+    """
+
+    def __init__(self, html):
+        super().__init__(convert_charrefs=True)
+        self.links = []  # (name, href)
+        self._link = None  # [aria-label, href, text pieces]
+        self.feed(html)
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "a":
+            attrs = dict(attrs)
+            self._link = [attrs.get("aria-label"), attrs.get("href"), []]
+
+    def handle_endtag(self, tag):
+        if tag == "a" and self._link is not None:
+            label, href, text = self._link
+            self.links.append((label if label is not None else collapse(text), href))
+            self._link = None
+
+    def handle_data(self, data):
+        if self._link is not None:
+            self._link[2].append(data)
+
+
+def link_href(response, name):
+    """The address of the one link whose whole name is exactly `name`, like a click.
+
+    It fails when no link, or more than one link, has that name.
+    """
+    hrefs = [
+        href
+        for link_name, href in PageLinks(response.content.decode()).links
+        if link_name == name
+    ]
+    if len(hrefs) != 1:
+        raise AssertionError(f"{len(hrefs)} links named {name!r}, not 1")
+    return hrefs[0]

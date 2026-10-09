@@ -2,11 +2,13 @@ from collections.abc import Callable
 from typing import NamedTuple
 from urllib.parse import urlencode
 
+from django.db import DatabaseError, transaction
+from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
-from django.views.decorators.http import require_POST
+from django.views.decorators.http import require_http_methods, require_POST
 
-from .forms import TodoForm
+from .forms import TodoEditForm, TodoForm
 from .models import Todo
 
 # Django refuses a form with more than 1,000 fields, and then nothing is
@@ -176,6 +178,45 @@ def todo_toggle(request, pk):
     todo.done = not todo.done
     todo.save()
     return back_to_list(request)
+
+
+@require_http_methods(["GET", "HEAD", "POST"])
+def todo_edit(request, pk):
+    """GET shows the edit form with the saved values. POST saves a good form.
+
+    A bad form shows the page again, with the errors and what the person typed.
+    The template gets `pk`, not the to-do, so it never shows a title that was
+    not saved.
+    """
+    todo = get_object_or_404(Todo, pk=pk)
+    params = list_params(request.GET)
+    if request.method == "POST":
+        form = TodoEditForm(request.POST, instance=todo)
+        if form.is_valid():
+            edited = form.save(commit=False)
+            try:
+                # Only change a row that is there. A plain save() would make
+                # the to-do again if someone deleted it a moment ago. The
+                # atomic block keeps a failed save from breaking the rest of
+                # the request's database work.
+                with transaction.atomic():
+                    edited.save(force_update=True)
+            except DatabaseError:
+                raise Http404("This to-do was deleted.") from None
+            form.save_m2m()
+            return back_to_list(request)
+    else:
+        form = TodoEditForm(instance=todo)
+    return render(
+        request,
+        "todos/todo_edit.html",
+        {
+            "pk": pk,
+            "form": form,
+            "list_query": list_query(params),
+            "list_url": reverse("todo_list") + list_query(params),
+        },
+    )
 
 
 @require_POST

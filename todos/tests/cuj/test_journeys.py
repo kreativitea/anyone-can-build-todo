@@ -8,9 +8,11 @@ a journey proves that the page's own forms really work.
 
 from django.test import Client, TestCase
 from django.urls import reverse
+from django.utils.html import escape
 
 from todos.models import Todo
 from todos.tests.integration.helpers import (
+    link_href,
     page_forms,
     page_without_csrf,
     title_element,
@@ -24,11 +26,13 @@ def todo_row(todo, done=False):
     """One to-do on the list, exactly as the page must show it.
 
     The title, its priority label and its due date come from `title_element`,
-    which builds them from the to-do itself.
+    which builds them from the to-do itself. Then the Edit link, Done and Delete.
     """
     return (
         f'<li id="todo-{todo.pk}" class="{"done" if done else ""}">'
         f"{title_element(todo)}"
+        f'<a class="edit" href="{reverse("todo_edit", args=[todo.pk])}" '
+        f'aria-label="Edit {escape(todo.title)}">Edit</a>'
         f'<form method="post" action="{reverse("todo_toggle", args=[todo.pk])}">'
         f'<button type="submit">{"Undo" if done else "Done"}</button></form>'
         f'<form method="post" action="{reverse("todo_delete", args=[todo.pk])}">'
@@ -79,6 +83,15 @@ class JourneyTests(TestCase):
         milk = Todo.objects.get()
         self.assertIn('<small class="due">due 5 Oct 2026</small>', todo_row(milk))
         self.assertNotIn("priority", todo_row(milk))
+        self.assert_list(page, todo_row(milk))
+
+        # Fix a typo: open the edit page from the row, change the title, Save.
+        page = self.client.get(link_href(page, "Edit Buy milk"))
+        self.assertEqual(page.status_code, 200)
+        page = self.press(page, "Save", title="Buy oat milk")
+        milk.refresh_from_db()
+        self.assertEqual(milk.title, "Buy oat milk")
+        self.assertEqual(milk.due_date.isoformat(), "2026-10-05")
         self.assert_list(page, todo_row(milk))
 
         page = self.press(page, "Done")

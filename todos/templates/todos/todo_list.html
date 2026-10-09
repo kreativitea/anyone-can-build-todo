@@ -1,20 +1,15 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>To-do list</title>
-  <link rel="icon" href="data:,">
-  <style>
-    body { font-family: system-ui, sans-serif; max-width: 32rem; margin: 2rem auto; padding: 0 1rem; }
+{% extends "base.html" %}
+
+{% block title %}To-do list{% endblock %}
+
+{% block style %}
     form.add { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-bottom: 1.5rem; }
     form.add input[name=title] { flex: 1 1 100%; padding: 0.5rem; font-size: 1rem; }
     form.add input[type=date] { padding: 0.4rem; font-size: 1rem; }
     form.add select { padding: 0.4rem; font-size: 1rem; }
     details.add-notes { flex: 1 1 100%; }
     details.add-notes textarea { display: block; width: 100%; box-sizing: border-box; margin-top: 0.5rem; padding: 0.5rem; font: inherit; resize: vertical; }
-    .errorlist { flex: 1 1 100%; margin: 0; padding: 0; list-style: none; color: #b00020; }
-    .errorlist li { padding: 0; border: 0; }
+    form.add .errorlist { flex: 1 1 100%; }
     nav.filters { display: flex; gap: 1rem; margin-bottom: 1rem; }
     nav.filters a[aria-current="page"] { font-weight: bold; text-decoration: none; color: inherit; }
     ul { list-style: none; padding: 0; }
@@ -27,8 +22,7 @@
     li .priority.low { color: #555; border: 1px solid #bbb; }
     li.done .priority { opacity: 0.6; }
     .list-footer { color: #666; font-size: 0.9rem; }
-    button { padding: 0.4rem 0.8rem; font-size: 0.9rem; cursor: pointer; }
-    /* The details pane. Edit (4) moves these rules into the list page's block style. */
+    /* The details pane. */
     .title a { color: inherit; text-decoration: none; }
     .title a:hover, .title a:focus-visible { text-decoration: underline; }
     /* Phones have no hover: a light grey underline shows the title can be tapped. */
@@ -42,15 +36,16 @@
     aside.details dt { color: #555; }
     aside.details dd { margin: 0; }
     .pane-hint { display: none; color: #666; }
+    /* Wide screens: the list page is wider than base.html's 32rem, for the pane. */
     @media (min-width: 48rem) {
       body { max-width: 56rem; }
       .layout { display: grid; grid-template-columns: minmax(0, 32rem) minmax(16rem, 1fr); gap: 2rem; align-items: start; }
       aside.details { margin-top: 0; position: sticky; top: 1rem; max-height: calc(100vh - 2rem); overflow-y: auto; }
       .pane-hint { display: block; margin: 0; }
     }
-  </style>
-</head>
-<body>
+{% endblock %}
+
+{% block content %}
   <h1>To-do list</h1>
 
   <div class="layout">
@@ -84,6 +79,7 @@
         {% for todo in todos %}
           <li id="todo-{{ todo.pk }}" class="{% if todo.done %}done{% endif %}{% if todo == selected %} selected{% endif %}">
             <span class="title"><a href="{{ select_base }}{{ todo.pk }}#details"{% if todo == selected %} aria-current="true"{% endif %}>{{ todo.title }}</a>{% if todo.priority != todo.Priority.MEDIUM %} <span class="priority {{ todo.get_priority_display|lower }}">{{ todo.get_priority_display }} priority</span>{% endif %}{% if todo.due_date %}<small class="due">due {{ todo.due_date|date:"j M Y" }}</small>{% endif %}</span>
+            <a class="edit" href="{% url 'todo_edit' todo.pk %}{{ list_query }}" aria-label="Edit {{ todo.title }}">Edit</a>
             <form method="post" action="{% url 'todo_toggle' todo.pk %}{{ list_query }}">
               {% csrf_token %}
               <button type="submit">{% if todo.done %}Undo{% else %}Done{% endif %}</button>
@@ -122,12 +118,11 @@
         {% if selected.notes %}<dt>Notes</dt><dd class="notes">{{ selected.notes|linebreaksbr }}</dd>{% endif %}
       </dl>
       {# Every control that CHANGES something goes in details-actions; Close only reads. #}
-      {# Edit (4): the pane's Edit link goes here, before Close. #}
-      <p class="details-actions"><a href="{{ close_url }}#todo-{{ selected.pk }}">Close</a></p>
+      {# Edit keeps list_query, with `selected`: after Save or Cancel the pane is open again. #}
+      <p class="details-actions"><a href="{% url 'todo_edit' selected.pk %}{{ list_query }}">Edit</a> <a href="{{ close_url }}#todo-{{ selected.pk }}">Close</a></p>
     </aside>
     {% elif todos %}
     <p class="pane-hint">Click a to-do's title to see its details.</p>
     {% endif %}
   </div>
-</body>
-</html>
+{% endblock %}
