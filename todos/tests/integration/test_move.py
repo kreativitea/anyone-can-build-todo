@@ -4,9 +4,11 @@ from todos.models import Todo, TodoList
 from todos.tests.integration.helpers import (
     ClassCounter,
     LoggedInTestCase,
+    count_elements,
     first_list,
     make_user,
     move_form,
+    move_status,
     page_parts,
     row_html,
 )
@@ -227,3 +229,82 @@ class MoveTests(LoggedInTestCase):
                 row = row_html(response, a)
                 self.assertEqual(ClassCounter(row, "form", "move").count, 0)
                 self.assertNotIn("/move/", row)
+
+    def test_a_todo_with_no_position_is_last_in_my_order(self):
+        # bulk_create does not call save(): no number. It must not jump to
+        # the top (SQLite puts empty values first unless told otherwise).
+        self.make("A")
+        self.make("B")
+        Todo.objects.bulk_create(
+            [Todo(todo_list=self.todo_list, owner=self.user, title="No place")]
+        )
+        self.assertEqual(self.titles(), ["A", "B", "No place"])
+
+    # After a move: the focus and the message.
+
+    def moved_page(self, todo, direction):
+        """Press Move on `todo` from My order, and follow the redirect."""
+        return self.client.post(
+            self.move_url(todo), {"direction": direction}, follow=True
+        )
+
+    def test_after_a_move_the_same_button_has_the_focus(self):
+        a = self.make("A")
+        b = self.make("B")
+        c = self.make("C")
+        page = self.moved_page(c, "up")
+        self.assertEqual(page_parts(page).titles, ["A", "C", "B"])
+        for todo, form in [
+            (a, move_form(a, MY_ORDER, up=False)),
+            (c, move_form(c, MY_ORDER, focus="up")),
+            (b, move_form(b, MY_ORDER, down=False)),
+        ]:
+            with self.subTest(title=todo.title):
+                self.assertInHTML(form, row_html(page, todo), count=1)
+        self.assertContains(page, move_status("Moved C up (2 of 3)"), html=True)
+        self.assertEqual(count_elements(page, "p", "move-status"), 1)
+
+    def test_at_the_top_the_other_button_has_the_focus(self):
+        # Moved to the first row: its ↑ is disabled, so ↓ gets the focus.
+        self.make("A")
+        b = self.make("B")
+        page = self.moved_page(b, "up")
+        self.assertInHTML(
+            move_form(b, MY_ORDER, up=False, focus="down"), row_html(page, b), count=1
+        )
+        self.assertContains(page, move_status("Moved B up (1 of 2)"), html=True)
+
+    def test_the_message_names_the_title_safely(self):
+        self.make("A")
+        tea = self.make("<b>Tea & cake</b>")
+        page = self.moved_page(tea, "up")
+        self.assertContains(
+            page, move_status("Moved <b>Tea & cake</b> up (1 of 2)"), html=True
+        )
+
+    def test_a_move_that_changes_nothing_says_nothing(self):
+        a = self.make("A")
+        self.make("B")
+        page = self.moved_page(a, "up")
+        self.assertEqual(count_elements(page, "p", "move-status"), 0)
+        self.assertInHTML(
+            move_form(a, MY_ORDER, up=False, focus="down"), row_html(page, a), count=1
+        )
+
+    def test_the_focus_and_the_message_are_shown_once(self):
+        self.make("A")
+        b = self.make("B")
+        self.moved_page(b, "up")
+        page = self.client.get(self.list_url(query=MY_ORDER))
+        self.assertInHTML(move_form(b, MY_ORDER, up=False), row_html(page, b), count=1)
+        self.assertEqual(count_elements(page, "p", "move-status"), 0)
+
+    def test_no_focus_on_another_sort_after_a_move(self):
+        # The move came from My order, but the next page is "Date added":
+        # it has no buttons, so no focus and no message.
+        a = self.make("A")
+        b = self.make("B")
+        self.post_move(b, "up")
+        page = self.client.get(self.list_url())
+        self.assertNotIn("autofocus", row_html(page, a) + row_html(page, b))
+        self.assertEqual(count_elements(page, "p", "move-status"), 0)

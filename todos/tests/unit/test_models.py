@@ -7,6 +7,7 @@ from django.utils import timezone
 
 from todos.models import Todo, TodoList
 from todos.tests.integration.helpers import first_list, make_user
+from todos.views import SORT_ORDERS
 
 
 class TodoModelTests(TestCase):
@@ -292,12 +293,56 @@ class PositionModelTests(TestCase):
             self.titles_in_my_order(self.todo_list), ["A1", "A3", "No place"]
         )
 
-    def test_the_next_repeating_copy_goes_to_the_end(self):
+    def test_the_next_repeating_copy_takes_the_originals_place(self):
+        # Orchestrator decision: the copy keeps the place in My order; the
+        # completed original goes to the completed to-dos (they go last).
+        bins = self.make("Bins", repeat="weekly", due_date=date(2026, 10, 12))
+        a2 = self.make("A2")
+        bins.set_done(True)
+        bins.refresh_from_db()
+        self.assertEqual(self.position(bins.next_todo), 1)
+        manual = Todo.objects.filter(todo_list=self.todo_list).order_by(
+            *SORT_ORDERS["manual"]
+        )
+        self.assertEqual(
+            list(manual.values_list("pk", flat=True)),
+            [bins.next_todo_id, a2.pk, bins.pk],
+        )
+
+    def test_undo_of_a_repeating_todo_puts_it_back_in_its_place(self):
         bins = self.make("Bins", repeat="weekly", due_date=date(2026, 10, 12))
         self.make("A2")
         bins.set_done(True)
-        bins.refresh_from_db()
-        self.assertEqual(self.position(bins.next_todo), 3)
+        bins.set_done(False)  # the copy is deleted: nobody changed it
+        self.assertEqual(self.titles_in_my_order(self.todo_list), ["Bins", "A2"])
+
+    def test_moving_the_same_instance_after_create_goes_to_the_end(self):
+        # Not read again from the database: save() remembers the list too.
+        milk = self.make("Buy milk")
+        self.make("B1", todo_list=self.work)
+        milk.todo_list = self.work
+        milk.save()
+        self.assertEqual(self.position(milk), 2)
+
+    def test_save_with_update_fields_writes_the_new_list_and_owner(self):
+        ben = make_user("ben")
+        bens_list = first_list(ben)
+        milk = self.make("Buy milk")
+        milk.todo_list = bens_list
+        milk.title = "Buy oat milk"
+        milk.save(update_fields=["title"])
+        row = Todo.objects.values("title", "todo_list", "owner", "position").get(
+            pk=milk.pk
+        )
+        self.assertEqual(
+            row,
+            {
+                "title": "Buy oat milk",
+                "todo_list": bens_list.pk,
+                "owner": ben.pk,
+                "position": 1,
+            },
+        )
 
     def test_meta_ordering_is_still_oldest_first(self):
         # Protecting: "My order" is its own sort. Every other query keeps the

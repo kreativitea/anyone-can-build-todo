@@ -566,21 +566,32 @@ def toggle_form(todo, done=False, query=""):
     )
 
 
-def move_form(todo, query="", up=True, down=True):
+def move_form(todo, query="", up=True, down=True, focus=None):
     """A row's Move up / Move down form (reorder, 16), exactly, without the CSRF token.
 
     `up=False` (the first row) or `down=False` (the last row) draws that
     button `disabled`. `query` is the list query, like "?sort=manual".
+    `focus` ("up" or "down") is the button with `autofocus`, right after a move.
     """
     title = escape(todo.title)
+
+    def extra(direction, enabled):
+        disabled = "" if enabled else " disabled"
+        return disabled + (" autofocus" if focus == direction else "")
+
     return (
         f'<form class="move" method="post" action="/{todo.pk}/move/{escape(query)}">'
         f'<button type="submit" name="direction" value="up" aria-label="Move {title} up" '
-        f'title="Move up"{"" if up else " disabled"}>↑</button>'
+        f'title="Move up"{extra("up", up)}>↑</button>'
         f'<button type="submit" name="direction" value="down" aria-label="Move {title} down" '
-        f'title="Move down"{"" if down else " disabled"}>↓</button>'
+        f'title="Move down"{extra("down", down)}>↓</button>'
         "</form>"
     )
+
+
+def move_status(text):
+    """The message after a move, like "Moved Buy milk up (2 of 5)", exactly."""
+    return f'<p class="move-status" role="status">{escape(text)}</p>'
 
 
 def row_html(response, todo):
