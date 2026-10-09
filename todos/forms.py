@@ -87,6 +87,39 @@ class TodoForm(forms.ModelForm):
         return bool(getattr(self, "cleaned_data", {}).get("notes"))
 
 
+class TodoListForm(forms.ModelForm):
+    """The name of a list, on the "New list" and "Rename or delete" pages.
+
+    `owner` is keyword-only: forgetting it is an error at once. The owner is
+    never a field: the view sets it.
+    """
+
+    class Meta:
+        model = TodoList
+        fields = [
+            "name",
+        ]
+        widgets = {
+            "name": forms.TextInput(attrs={"autofocus": True}),
+        }
+
+    def __init__(self, *args, owner, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.owner = owner
+
+    def clean_name(self):
+        """One person cannot have two lists with the same name, big or small letters.
+
+        Django skips the database constraint here (`owner` is not a field), so
+        the form checks it. The constraint is the safety net.
+        """
+        name = self.cleaned_data["name"]
+        same = TodoList.objects.owned_by(self.owner).filter(name__iexact=name)
+        if same.exclude(pk=self.instance.pk).exists():
+            raise forms.ValidationError(f'You already have a list called "{name}".')
+        return name
+
+
 class SubtaskForm(forms.ModelForm):
     """The "New step" box on the steps page. Django checks: not empty, at most 200."""
 

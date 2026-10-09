@@ -14,7 +14,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_http_methods, require_POST
 
-from .forms import SubtaskForm, TodoEditForm, TodoForm
+from .forms import SubtaskForm, TodoEditForm, TodoForm, TodoListForm
 from .models import Todo, TodoList
 
 # Django refuses a form with more than 1,000 fields, and then nothing is
@@ -275,16 +275,22 @@ def get_list(request, list_id):
     return get_object_or_404(TodoList.objects.for_user(request.user), pk=list_id)
 
 
+def get_owned_list(request, list_id):
+    """A list this person owns, or 404. For rename and delete."""
+    return get_object_or_404(TodoList.objects.owned_by(request.user), pk=list_id)
+
+
 def page_context(request, form, current_list):
     """What the list page needs. Both views use this, so a new key goes here once.
 
-    Only the person's own to-dos: every query starts with for_user.
+    Only the to-dos of the open list: every query starts with for_user, then
+    the list, and every key comes from that.
     """
     params = list_params(request.GET)
     list_id = current_list.pk
-    mine = Todo.objects.for_user(request.user)
+    mine = Todo.objects.for_user(request.user).filter(todo_list=current_list)
     # Each to-do comes with its step counts, in the same query (no N+1).
-    todos = Todo.objects.for_user(request.user).with_subtask_progress()
+    todos = mine.with_subtask_progress()
     todos = filter_todos(todos, params)
     todos = search_todos(todos, params)
     todos = sort_todos(todos, params)
@@ -318,6 +324,7 @@ def page_context(request, form, current_list):
         "clear_search_url": reverse("todo_list", args=[list_id])
         + list_query(without_q),
         "current_list": current_list,
+        "lists": TodoList.objects.for_user(request.user),
     }
 
 
@@ -325,7 +332,9 @@ def home(request):
     """`/`: only sends the browser to the person's first own list. A GET only reads."""
     first = TodoList.objects.owned_by(request.user).first()
     if first is None:
-        raise Http404("You have no list.")
+        # A user from before lists, from createsuperuser, or who deleted
+        # every list. GET never makes anything: "New list" does.
+        return redirect("list_create")
     return redirect("todo_list", list_id=first.pk)
 
 
@@ -379,6 +388,9 @@ def todo_edit(request, pk):
     """
     todo = get_object_or_404(Todo.objects.for_user(request.user), pk=pk)
     params = list_params(request.GET)
+    # Save and Cancel go back to the list the person came from, also after a
+    # move (owner decision): the to-do is gone from it, which shows it moved.
+    came_from = todo.todo_list_id
     if request.method == "POST":
         form = TodoEditForm(request.POST, instance=todo, user=request.user)
         if form.is_valid():
@@ -394,7 +406,7 @@ def todo_edit(request, pk):
             except DatabaseError:
                 raise Http404("This to-do was deleted.") from None
             form.save_m2m()
-            return back_to_list(request, edited.todo_list_id)
+            return back_to_list(request, came_from)
     else:
         form = TodoEditForm(instance=todo, user=request.user)
     return render(
@@ -404,7 +416,7 @@ def todo_edit(request, pk):
             "pk": pk,
             "form": form,
             "list_query": list_query(params),
-            "list_url": list_url(request, todo.todo_list_id),
+            "list_url": list_url(request, came_from),
         },
     )
 
@@ -424,9 +436,63 @@ def todo_delete_completed(request, list_id):
     # One delete for all of them. Django also deletes their steps (CASCADE),
     # in one more query. Never delete them one by one in a loop.
     # Only the person's own: another person's ids delete nothing.
+    # Only this list's: an id from another list is ignored, even the person's own.
     current_list = get_list(request, list_id)
-    Todo.objects.for_user(request.user).completed().filter(pk__in=ids).delete()
+    Todo.objects.for_user(request.user).filter(
+        todo_list=current_list
+    ).completed().filter(pk__in=ids).delete()
     return back_to_list(request, current_list.pk)
+
+
+# Lists (13): make, rename and delete. Rename and delete are owner-only
+# (get_owned_list). There is no "all lists" page: the lists <nav> on the list
+# page is the index.
+
+
+def list_form_page(request, form, current_list=None):
+    """The "New list" page (no current_list) or the "Rename or delete" page."""
+    lists = TodoList.objects.for_user(request.user)
+    context = {"form": form, "current_list": current_list}
+    if current_list is None:
+        # No Cancel without a list: "/" would come back here.
+        context["cancel_url"] = reverse("home") if lists.exists() else None
+    else:
+        context["cancel_url"] = reverse("todo_list", args=[current_list.pk])
+        # For the delete button: "Delete list and its 3 to-dos". One COUNT.
+        context["todo_count"] = current_list.todos.count()
+    return render(request, "todos/list_form.html", context)
+
+
+@require_http_methods(["GET", "POST"])
+def list_create(request):
+    form = TodoListForm(request.POST or None, owner=request.user)
+    if request.method == "POST" and form.is_valid():
+        form.instance.owner = request.user  # never from the form
+        new_list = form.save()
+        return redirect("todo_list", list_id=new_list.pk)
+    return list_form_page(request, form)
+
+
+@require_http_methods(["GET", "POST"])
+def list_edit(request, list_id):
+    """GET: the rename form and the delete button. POST: rename."""
+    current_list = get_owned_list(request, list_id)
+    form = TodoListForm(request.POST or None, instance=current_list, owner=request.user)
+    if request.method == "POST" and form.is_valid():
+        form.save()
+        return redirect("todo_list", list_id=current_list.pk)
+    if form.errors:
+        # The heading and Cancel keep the saved name, not the one typed.
+        current_list.refresh_from_db()
+    return list_form_page(request, form, current_list)
+
+
+@require_POST
+def list_delete(request, list_id):
+    """Delete the list AND its to-dos (owner decision; CASCADE). The button said how many."""
+    current_list = get_owned_list(request, list_id)
+    current_list.delete()
+    return redirect("home")
 
 
 # Steps (subtasks): each to-do's own small page, /<id>/subtasks/.

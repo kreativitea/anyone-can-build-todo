@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+
+{# One page for "New list" (no current_list) and "Rename or delete <name>". #}
+{% block title %}{% if current_list %}Rename or delete {{ current_list.name }}{% else %}New list{% endif %} – To-do list{% endblock %}
+
+{% block style %}
+    h1 { overflow-wrap: anywhere; }
+    form.list-name .field { display: flex; flex-direction: column; gap: 0.25rem; margin-bottom: 1rem; }
+    form.list-name input { padding: 0.5rem; font: inherit; }
+    form.list-name .actions { display: flex; align-items: center; gap: 1rem; }
+    form.delete-list { margin-top: 2rem; padding-top: 1rem; border-top: 1px solid #ddd; }
+{% endblock %}
+
+{% block content %}
+  <h1>{% if current_list %}Rename or delete {{ current_list.name }}{% else %}New list{% endif %}</h1>
+
+  <form class="list-name" method="post" action="{% if current_list %}{% url 'list_edit' current_list.pk %}{% else %}{% url 'list_create' %}{% endif %}">
+    {% csrf_token %}
+    <div class="field">{{ form.name.as_field_group }}</div>
+    <div class="actions">
+      <button type="submit">Save</button>
+      {% if cancel_url %}<a href="{{ cancel_url }}">Cancel</a>{% endif %}
+    </div>
+  </form>
+
+  {% if current_list %}
+    {# Deleting a list deletes its to-dos (owner decision): the button says how many. #}
+    <form class="delete-list" method="post" action="{% url 'list_delete' current_list.pk %}">
+      {% csrf_token %}
+      <button type="submit">Delete list{% if todo_count %} and its {{ todo_count }} to-do{{ todo_count|pluralize }}{% endif %}</button>
+    </form>
+  {% endif %}
+{% endblock %}

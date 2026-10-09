@@ -5,6 +5,7 @@ from . import views
 urlpatterns = [
     # `/` only sends the browser to the person's first list.
     path("", views.home, name="home"),
+    path("lists/new/", views.list_create, name="list_create"),
     path("lists/<int:list_id>/", views.todo_list, name="todo_list"),
     path("lists/<int:list_id>/add/", views.todo_add, name="todo_add"),
     path(
@@ -12,6 +13,8 @@ urlpatterns = [
         views.todo_delete_completed,
         name="todo_delete_completed",
     ),
+    path("lists/<int:list_id>/edit/", views.list_edit, name="list_edit"),
+    path("lists/<int:list_id>/delete/", views.list_delete, name="list_delete"),
     path("<int:pk>/toggle/", views.todo_toggle, name="todo_toggle"),
     path("<int:pk>/edit/", views.todo_edit, name="todo_edit"),
     path("<int:pk>/delete/", views.todo_delete, name="todo_delete"),

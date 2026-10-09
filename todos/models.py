@@ -67,8 +67,13 @@ class TodoList(models.Model):
 
 class TodoQuerySet(models.QuerySet):
     def for_user(self, user):
-        """Only this person's to-dos. Every to-do query in a view starts here."""
-        return self.filter(owner=user)
+        """Only the to-dos this person may see: those in their lists. Every
+        to-do query in a view starts here.
+
+        The LIST decides, not Todo.owner, so sharing (20) only changes
+        TodoList. It is one query: the lists are a subquery.
+        """
+        return self.filter(todo_list__in=TodoList.objects.for_user(user))
 
     def remaining(self):
         """The to-dos that are not done yet."""

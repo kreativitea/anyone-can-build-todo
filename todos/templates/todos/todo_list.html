@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}{% if q %}Search: {{ q }} – {% endif %}To-do list{% endblock %}
+{% block title %}{% if q %}Search: {{ q }} – {% endif %}{{ current_list.name }} – To-do list{% endblock %}
 
 {% block style %}
     form.add { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-bottom: 1.5rem; }
@@ -13,6 +13,10 @@
     form.add .add-actions { flex: 1 1 100%; }
     form.search { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-bottom: 1rem; }
     form.search input[type=search] { flex: 1 1 10rem; padding: 0.4rem; font-size: 1rem; }
+    nav.lists { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; margin-bottom: 1rem; }
+    nav.lists a[aria-current="page"] { font-weight: bold; text-decoration: none; color: inherit; }
+    h1 { margin-bottom: 0.25rem; overflow-wrap: anywhere; }
+    .list-actions { margin-top: 0; font-size: 0.9rem; }
     nav.filters { display: flex; flex-wrap: wrap; gap: 1rem; margin-bottom: 1rem; }
     nav.filters a[aria-current="page"] { font-weight: bold; text-decoration: none; color: inherit; }
     nav.sort { display: flex; flex-wrap: wrap; gap: 1rem; margin-bottom: 1rem; }
@@ -57,7 +61,15 @@
 {% endblock %}
 
 {% block content %}
-  <h1>To-do list</h1>
+  {# The person's lists, one link each, in the order they were made. #}
+  <nav class="lists" aria-label="Lists">
+    {% for each_list in lists %}<a href="{% url 'todo_list' each_list.pk %}"{% if each_list == current_list %} aria-current="page"{% endif %}>{{ each_list.name }}</a>{% endfor %}
+    <a href="{% url 'list_create' %}">New list</a>
+  </nav>
+
+  <h1>{{ current_list.name }}</h1>
+  {# "Rename or delete" alone would not say which list: the aria-label does. #}
+  <p class="list-actions"><a href="{% url 'list_edit' current_list.pk %}" aria-label="Rename or delete {{ current_list.name }}">Rename or delete</a></p>
 
   <div class="layout">
     <div class="main">
