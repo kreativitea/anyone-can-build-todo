@@ -80,6 +80,9 @@ class PriorityTests(TestCase):
             response, title_with_label("Call home", HIGH_LABEL), count=1, html=True
         )
         self.assertContains(response, title_with_label("Buy milk"), count=1, html=True)
+        # A space between the title and the label, so the text reads
+        # "Call home High priority". html=True ignores spaces, so not here.
+        self.assertContains(response, f"Call home {HIGH_LABEL}", count=1)
 
     def test_low_label_is_shown(self):
         Todo.objects.create(title="Read chapter 3", priority=Todo.Priority.LOW)
