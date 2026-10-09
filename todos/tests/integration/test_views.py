@@ -1,4 +1,3 @@
-import re
 from datetime import date
 
 from django.db import connection
@@ -10,6 +9,7 @@ from todos.models import Todo
 from todos.tests.integration.helpers import (
     delete_completed_form,
     list_footer,
+    page_forms,
     page_without_csrf,
 )
 
@@ -290,16 +290,17 @@ class DeleteCompletedTests(TestCase):
         # Like a real browser: read the form from the page, then send it back.
         # This fails if the form has no {% csrf_token %}.
         client = Client(enforce_csrf_checks=True)
-        page = client.get(reverse("todo_list")).content.decode()
-        form = re.search(r'<form class="delete-completed".*?</form>', page, re.S)
-        self.assertIsNotNone(form, "the page has no delete-completed form")
-        token = re.search(r'name="csrfmiddlewaretoken" value="([^"]+)"', form[0])
-        self.assertIsNotNone(token, "the delete-completed form has no CSRF token")
-        ids = re.findall(r'name="ids" value="([^"]+)"', form[0])
-        response = client.post(
-            reverse("todo_delete_completed"),
-            {"csrfmiddlewaretoken": token[1], "ids": ids},
-        )
+        page = client.get(reverse("todo_list"))
+        [(form, button)] = [
+            (form, button)
+            for form in page_forms(page)
+            for button in form.buttons
+            if button.text == "Delete 2 completed to-dos"
+        ]
+        self.assertIn("csrfmiddlewaretoken", form.fields)
+        # Both ids are sent, not only the last one.
+        self.assertEqual(form.fields["ids"], [str(self.milk.pk), str(self.home.pk)])
+        response = client.post(form.action, form.data(button))
         self.assertEqual(response.status_code, 302)
         self.assertEqual(self.titles(), {"Read chapter 3"})
 
