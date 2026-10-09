@@ -6,7 +6,7 @@ from urllib.parse import urlencode
 from django.contrib.auth import login
 from django.contrib.auth.decorators import login_not_required
 from django.contrib.auth.forms import UserCreationForm
-from django.db import DatabaseError, transaction
+from django.db import DatabaseError, IntegrityError, transaction
 from django.db.models import F, Q
 from django.db.models.functions import Lower
 from django.http import Http404, HttpResponseBadRequest
@@ -355,7 +355,14 @@ def todo_add(request, list_id):
         # The list is in the address, never in the form. save() sets the
         # owner from the list.
         form.instance.todo_list = current_list
-        form.save()
+        try:
+            # The database checks the list when this commits.
+            with transaction.atomic():
+                form.save()
+        except IntegrityError:
+            # Another tab deleted the list a moment ago: like a list that
+            # does not exist.
+            raise Http404("This list was deleted.") from None
         return back_to_list(request, current_list.pk)
     return render(
         request, "todos/todo_list.html", page_context(request, form, current_list)
@@ -449,13 +456,30 @@ def todo_delete_completed(request, list_id):
 # page is the index.
 
 
+def came_from_list(request):
+    """The list "New list" was opened from (`?from=<id>`), only if this person
+    may use it; else None. Never an address from the request: only an id.
+    """
+    list_id = clean_id(request.GET.get("from"))
+    if list_id is None:
+        return None
+    return TodoList.objects.for_user(request.user).filter(pk=list_id).first()
+
+
 def list_form_page(request, form, current_list=None):
     """The "New list" page (no current_list) or the "Rename or delete" page."""
-    lists = TodoList.objects.for_user(request.user)
     context = {"form": form, "current_list": current_list}
     if current_list is None:
-        # No Cancel without a list: "/" would come back here.
-        context["cancel_url"] = reverse("home") if lists.exists() else None
+        came_from = came_from_list(request)
+        # The form posts to the same address, so Cancel still knows after an error.
+        context["from_query"] = list_query({"from": came_from.pk}) if came_from else ""
+        if came_from is not None:
+            context["cancel_url"] = reverse("todo_list", args=[came_from.pk])
+        elif TodoList.objects.for_user(request.user).exists():
+            context["cancel_url"] = reverse("home")
+        else:
+            # No Cancel without a list: "/" would come back here.
+            context["cancel_url"] = None
     else:
         context["cancel_url"] = reverse("todo_list", args=[current_list.pk])
         # For the delete button: "Delete list and its 3 to-dos". One COUNT.
@@ -463,23 +487,46 @@ def list_form_page(request, form, current_list=None):
     return render(request, "todos/list_form.html", context)
 
 
-@require_http_methods(["GET", "POST"])
+def posted(request):
+    """The form data on a POST, else None. An empty POST is still a POST: its
+    form shows "This field is required." (`request.POST or None` would not).
+    """
+    return request.POST if request.method == "POST" else None
+
+
+def save_list(form):
+    """Save a good list form; the list, or None.
+
+    Two requests with the same new name can both pass clean_name. Then the
+    database refuses the second one (the unique constraint), and the form
+    shows the same message as clean_name.
+    """
+    try:
+        with transaction.atomic():
+            return form.save()
+    except IntegrityError:
+        name = form.cleaned_data["name"]
+        form.add_error("name", TodoListForm.name_used_message(name))
+        return None
+
+
+@require_http_methods(["GET", "HEAD", "POST"])
 def list_create(request):
-    form = TodoListForm(request.POST or None, owner=request.user)
+    form = TodoListForm(posted(request), owner=request.user)
     if request.method == "POST" and form.is_valid():
         form.instance.owner = request.user  # never from the form
-        new_list = form.save()
-        return redirect("todo_list", list_id=new_list.pk)
+        new_list = save_list(form)
+        if new_list is not None:
+            return redirect("todo_list", list_id=new_list.pk)
     return list_form_page(request, form)
 
 
-@require_http_methods(["GET", "POST"])
+@require_http_methods(["GET", "HEAD", "POST"])
 def list_edit(request, list_id):
     """GET: the rename form and the delete button. POST: rename."""
     current_list = get_owned_list(request, list_id)
-    form = TodoListForm(request.POST or None, instance=current_list, owner=request.user)
-    if request.method == "POST" and form.is_valid():
-        form.save()
+    form = TodoListForm(posted(request), instance=current_list, owner=request.user)
+    if request.method == "POST" and form.is_valid() and save_list(form):
         return redirect("todo_list", list_id=current_list.pk)
     if form.errors:
         # The heading and Cancel keep the saved name, not the one typed.

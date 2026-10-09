@@ -1,6 +1,6 @@
 from django import forms
 
-from .models import Subtask, Todo, TodoList
+from .models import Subtask, Todo, TodoList, list_name_key
 
 
 class NotesField(forms.CharField):
@@ -108,16 +108,23 @@ class TodoListForm(forms.ModelForm):
         self.owner = owner
 
     def clean_name(self):
-        """One person cannot have two lists with the same name, big or small letters.
+        """One person cannot have two lists with the same name: the same
+        `name_key` (NFKC, then casefold), like the database constraint.
 
         Django skips the database constraint here (`owner` is not a field), so
         the form checks it. The constraint is the safety net.
         """
         name = self.cleaned_data["name"]
-        same = TodoList.objects.owned_by(self.owner).filter(name__iexact=name)
+        same = TodoList.objects.owned_by(self.owner).filter(
+            name_key=list_name_key(name)
+        )
         if same.exclude(pk=self.instance.pk).exists():
-            raise forms.ValidationError(f'You already have a list called "{name}".')
+            raise forms.ValidationError(self.name_used_message(name))
         return name
+
+    @staticmethod
+    def name_used_message(name):
+        return f'You already have a list called "{name}".'
 
 
 class SubtaskForm(forms.ModelForm):

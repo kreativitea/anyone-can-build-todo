@@ -9,12 +9,15 @@
     form.list-name input { padding: 0.5rem; font: inherit; }
     form.list-name .actions { display: flex; align-items: center; gap: 1rem; }
     form.delete-list { margin-top: 2rem; padding-top: 1rem; border-top: 1px solid #ddd; }
+    /* Danger: it deletes the to-dos too. Red text and border, never the default look. */
+    form.delete-list button { color: #b00020; background: #fff5f5; border: 1px solid #b00020; border-radius: 0.25rem; }
+    form.delete-list button:hover, form.delete-list button:focus-visible { background: #b00020; color: #fff; }
 {% endblock %}
 
 {% block content %}
   <h1>{% if current_list %}Rename or delete {{ current_list.name }}{% else %}New list{% endif %}</h1>
 
-  <form class="list-name" method="post" action="{% if current_list %}{% url 'list_edit' current_list.pk %}{% else %}{% url 'list_create' %}{% endif %}">
+  <form class="list-name" method="post" action="{% if current_list %}{% url 'list_edit' current_list.pk %}{% else %}{% url 'list_create' %}{{ from_query }}{% endif %}">
     {% csrf_token %}
     <div class="field">{{ form.name.as_field_group }}</div>
     <div class="actions">

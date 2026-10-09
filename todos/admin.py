@@ -19,6 +19,13 @@ class TodoListAdmin(admin.ModelAdmin):
     list_display = ["name", "owner", "created_at"]
     list_filter = ["owner"]
 
+    def get_readonly_fields(self, request, obj=None):
+        # A new list needs an owner. Once it exists, a new owner would leave
+        # its to-dos with the old one (Todo.owner is always the list's owner).
+        if obj is not None:
+            return ["owner"]
+        return []
+
 
 @admin.register(Todo)
 class TodoAdmin(admin.ModelAdmin):

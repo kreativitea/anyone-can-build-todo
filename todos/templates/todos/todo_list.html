@@ -64,7 +64,7 @@
   {# The person's lists, one link each, in the order they were made. #}
   <nav class="lists" aria-label="Lists">
     {% for each_list in lists %}<a href="{% url 'todo_list' each_list.pk %}"{% if each_list == current_list %} aria-current="page"{% endif %}>{{ each_list.name }}</a>{% endfor %}
-    <a href="{% url 'list_create' %}">New list</a>
+    <a href="{% url 'list_create' %}?from={{ current_list.pk }}">New list</a>
   </nav>
 
   <h1>{{ current_list.name }}</h1>

@@ -1,9 +1,10 @@
+import unicodedata
+
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import MaxLengthValidator
 from django.db import models, transaction
 from django.db.models import Count, Q
-from django.db.models.functions import Lower
 from django.utils import timezone
 
 from . import repeat as rp
@@ -13,6 +14,32 @@ NOTES_LIMIT = 500
 
 # The name of the list a new person gets when they sign up.
 DEFAULT_LIST_NAME = "My to-dos"
+
+
+def list_name_key(name):
+    """The form of a list name that two names must not share: NFKC, then casefold.
+
+    NFKC turns wide letters into normal ones ("ＷＯＲＫ" is "WORK"), like search;
+    casefold ignores big and small letters, also outside A to Z ("Ä" and "ä",
+    "Straße" and "STRASSE").
+    """
+    return unicodedata.normalize("NFKC", name).casefold()
+
+
+# Control characters (Cc: line breaks, tab, bell, ...) and the line and
+# paragraph separators. Format characters (Cf) stay: emoji need the joiner.
+REFUSED_IN_LIST_NAMES = {"Cc", "Zl", "Zp"}
+
+
+def validate_list_name(name):
+    """A list name is one line of text: no line breaks or other control characters.
+
+    A migration imports this: never change what it accepts, write a new one.
+    """
+    if any(unicodedata.category(ch) in REFUSED_IN_LIST_NAMES for ch in name):
+        raise ValidationError(
+            "A list name cannot have line breaks or other control characters."
+        )
 
 
 class TodoListQuerySet(models.QuerySet):
@@ -42,7 +69,10 @@ class TodoList(models.Model):
         on_delete=models.CASCADE,
         related_name="todo_lists",
     )
-    name = models.CharField(max_length=50)
+    name = models.CharField(max_length=50, validators=[validate_list_name])
+    # list_name_key(name), set by save(). Two lists of one person never share
+    # it (the constraint below). NFKC can make a name longer, so no max length.
+    name_key = models.TextField(editable=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
     objects = TodoListQuerySet.as_manager()
@@ -51,11 +81,11 @@ class TodoList(models.Model):
         # The order they were made in. The id breaks a tie.
         ordering = ["created_at", "pk"]
         constraints = [
-            # One person cannot have "Work" and "work"; two people can each
-            # have "Work". The form checks it first, with a friendlier message.
+            # One person cannot have "Work", "work" and "ＷＯＲＫ"; two people
+            # can each have "Work". The form checks the same key first, with
+            # a friendlier message; this is the safety net.
             models.UniqueConstraint(
-                Lower("name"),
-                "owner",
+                fields=["owner", "name_key"],
                 name="todolist_unique_name_per_owner",
                 violation_error_message="You already have a list with this name.",
             ),
@@ -63,6 +93,19 @@ class TodoList(models.Model):
 
     def __str__(self):
         return self.name
+
+    def save(self, *args, **kwargs):
+        self.name_key = list_name_key(self.name)
+        super().save(*args, **kwargs)
+
+    def validate_constraints(self, exclude=None):
+        """Check the unique name also where a form leaves name_key out (it is
+        never a field), like the admin.
+        """
+        self.name_key = list_name_key(self.name)
+        if exclude:
+            exclude = set(exclude) - {"name_key"}
+        super().validate_constraints(exclude)
 
 
 class TodoQuerySet(models.QuerySet):
