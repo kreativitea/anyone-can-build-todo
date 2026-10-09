@@ -618,8 +618,20 @@ bug.
   decision). Anyone with to-dos on a laptop loses them; the plan and the PR say so. After a launch,
   a migration like this would need a different plan.
 - **Guessing passwords.** No limit on wrong tries. Fine for a class project; `django-axes` later.
+- **LAUNCH ITEM: rate limits and username enumeration (from the security review).** Sign-up is
+  open to everyone and has no limit: a script can make many accounts, and try many passwords on
+  the log-in page. The sign-up form also says "A user with that username already exists.", so
+  anyone can find out which usernames exist (this is called **username enumeration**). Nobody
+  uses the site yet, so no package is added now. **Before the launch:** add `django-axes` (it
+  locks out an address or a username after a number of wrong passwords), and decide on a limit
+  for sign-ups (for example with a rate-limit package or the hosting service's own limits).
+- **LAUNCH ITEM: `DEBUG` is on unless `DJANGO_DEBUG=False`.** The default stays `True` (owner
+  decision: it is a launch decision, not part of this feature). A live server that forgets
+  `DJANGO_DEBUG=False` shows Django's debug pages, and then also skips the HTTPS-only cookie
+  settings and the secret-key check. The deploy steps in `README.md` set it; check it at launch.
 - **The live server must set `DJANGO_SECRET_KEY`** before this deploys, or it will not start. This is
-  on purpose: better than running with the key from git.
+  on purpose: better than running with the key from git. An empty or blank key, or one that
+  starts with `django-insecure-` (like the laptop default), also refuses to start.
 - **Every test file changes.** Mechanical, but large. That is why 17 is built alone.
 - **The guard is a text search.** It can be fooled (e.g. `T = Todo; T.objects…`). The matrix is the
   real check; the guard catches the common mistake early.
@@ -773,3 +785,46 @@ Headless Chrome against `runserver` on a free port (a scratch database, stopped 
 - Narrow: Chrome's headless window is at least about 500 px wide, so a 375 px screenshot is cut
   off on the right (an artefact of the tool). At 500 px both pages fit: the bar sits at the top
   right, and the list keeps its full width.
+
+### After the security review: a stronger safety net
+
+A security reviewer attacked the branch as ben against ana on every address: nothing leaked and
+nothing changed. The safety net was still made stronger before the merge. Each new test was
+first shown failing (against the old code, or against a deliberate bug), then passing.
+
+1. **Every route of the whole project.** `test_every_url_is_in_the_matrix` now walks Django's
+   URL resolver (`get_resolver().url_patterns`, into every `include()`), not only
+   `todos/urls.py`. Only an explicit allowlist is left out: the admin (namespace `admin`), the
+   account pages (`login`, `logout`, `signup`) and `static/`. Every other route must be named and
+   be in `MATRIX` or `LIST_URLS`. Shown failing against a new `todos/export.py` view (every
+   title, unscoped) routed in `config/urls.py`.
+2. **The canary.** Ben's to-do, its notes and its step carry a unique word. As ana, the test
+   opens every `LIST_URLS` address, the list with each `show`, `sort`, `q` and `selected` value,
+   the add form's error page, delete completed with ben's id, and her own edit and steps pages.
+   The word must never appear. (A search for the whole word is not used, because the page shows
+   the search back; a part of it is used.) Shown failing against the same export view listed in
+   `LIST_URLS` (the walk then passes, the canary fails).
+3. **The guard reads every `.py` file** in `todos/` and `config/`, except tests and migrations,
+   with three more patterns: `model = Todo` / `Subtask` (a generic view or form), `get_list_or_404(
+   Todo|Subtask` and `.model.objects`. The lines that may match are listed in `ALLOWED`, by file
+   and exact text, each with its reason: the model methods that work on a to-do already found,
+   the ModelForms' `Meta.model`, the data migration, and the admin inline. Shown failing against
+   `class TodoDetail(DetailView): model = Todo` in `views.py`.
+4. **Settings.** With `DEBUG` off, an empty or blank `DJANGO_SECRET_KEY`, or one that starts with
+   `django-insecure-`, also refuses to start (red first: all four keys started). A new test loads
+   the live settings in a new Python and checks `SESSION_COOKIE_SECURE`, `CSRF_COOKIE_SECURE` and
+   `SESSION_COOKIE_HTTPONLY` are all `True` (shown failing without `SESSION_COOKIE_SECURE`). The
+   `DEBUG` default is not changed: see Risks.
+5. **Rate limits and username enumeration:** no package now; a launch item in Risks
+   (`django-axes`).
+6. **Steps page.** `test_my_steps_page_shows_only_my_steps`: ana's steps page lists exactly her
+   step, and not ben's word. Shown failing against `todo.subtasks.model.objects.all()` (the canary
+   and the guard catch it too).
+7. **HEAD is like GET** in the middleware: a visitor's `HEAD /5/edit/` goes to
+   `/accounts/login/?next=/5/edit/` (red first: `next` was `/`).
+8. **Defence in depth in the model.** `Todo.mark_edited()` and Undo's `DELETE` of the copy also
+   filter by `owner_id`. Two unit tests (red first): a stale object with another owner changes
+   nothing, and Undo never deletes a copy that belongs to someone else.
+
+After: `make test` Integration 292, Unit 117 passed; `make test-cuj` CUJ 6 passed; `make check`
+passed.
