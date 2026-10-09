@@ -30,9 +30,11 @@ class JourneyTests(StaticLiveServerTestCase):
         expect(page.get_by_text("Nothing to do yet")).to_be_visible()
 
         page.get_by_label("New to-do").fill("Buy milk")
+        page.get_by_label("Due date").fill("2026-10-12")
         page.get_by_role("button", name="Add").click()
         item = page.get_by_role("listitem").filter(has_text="Buy milk")
         expect(item).to_be_visible()
+        expect(item).to_contain_text("due 12 Oct 2026")
 
         item.get_by_role("button", name="Done").click()
         expect(item).to_have_class(re.compile(r"\bdone\b"))

@@ -21,3 +21,6 @@ class TodoModelTests(TestCase):
             created_at=timezone.now() - timedelta(days=1)
         )
         self.assertEqual(list(Todo.objects.all()), [older, newer])
+
+    def test_new_todo_has_no_due_date(self):
+        self.assertIsNone(Todo.objects.create(title="Buy milk").due_date)
