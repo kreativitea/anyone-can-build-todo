@@ -657,3 +657,35 @@ Results:
   `makemigrations --check` says "No changes detected".
 - **After the code:** `make test` (Integration 70, Unit 20), `make test-cuj` (CUJ 1) and
   `make check` all pass.
+
+### After the code review
+
+An adversarial code reviewer found no blockers, and all 13 planned mutations were caught. These
+fixes were made as new commits on the same branch:
+
+1. **The notes box always takes its own row** (orchestrator decision). The CSS is now one rule,
+   `details.add-notes { flex: 1 1 100%; }`; the rule for `[open]` only is gone. So the Add button
+   is always under the notes box, at the left, at every width, and opening the box does not move
+   it sideways. Checked by eye at 375 px and 800 px, closed and open (after a bad date), with
+   screenshots in the builder's scratchpad (`notes-375-closed.png`, `notes-375-open.png`,
+   `notes-800-closed.png`, `notes-800-open.png`). Playwright was used only as a camera on the page
+   Django drew. At both widths: the box is as wide as the form, Add is at the left under it, and
+   the page has no sideways scroll. This replaces point 6 above for the add form; the pane is still
+   checked by eye after the rebase.
+2. **The comment above `NOTES_LIMIT`** now says the truth: only the model uses the name; the form
+   gets the limit from `max_length`.
+3. **A bare `"\r"` is a line break too.** `NotesField` keeps `.replace("\r", "\n")`, and
+   `test_line_break_becomes_one_character` has a second subtest: `"a\rb"` becomes `"a\nb"`. Without
+   that replace, only the new subtest failed (`'a\rb' != 'a\nb'`).
+4. **`db_default=""`** next to `default=""`. `default` is used only by Django; `db_default` puts
+   `DEFAULT ''` in the database itself. Laptops share one `db.sqlite3` between branches, so code
+   from a branch without `notes` could otherwise not add a to-do (the column is `NOT NULL`).
+   `makemigrations` made `0004_alter_todo_notes.py` (not edited by hand; the merge queue makes the
+   migrations again anyway). Checked: a row inserted without `notes` gets `""`.
+5. **Two honest notes on the tests.**
+   - The case "500 characters with a line break" in `test_notes_limit` **passed before the code**
+     (the form ignored notes then). It is proven only by its mutation: without the `.replace(...)`,
+     it fails.
+   - Clicking the summary opens and closes the box; it does not put the cursor in the text box. The
+     person clicks or tabs into it. This is the browser's normal `<details>` behaviour, and it is
+     accepted.
