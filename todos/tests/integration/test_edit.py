@@ -1,8 +1,11 @@
+import re
 from datetime import date
+from unittest.mock import patch
 
-from django.test import TestCase
+from django.test import Client, TestCase
 from django.urls import reverse
 
+from todos.forms import TodoEditForm
 from todos.models import Todo
 from todos.tests.integration.helpers import page_parts
 
@@ -105,6 +108,16 @@ class EditTests(TestCase):
                 self.assertContains(response, box, html=True)
                 self.assert_not_changed()
 
+    def test_bad_edit_never_shows_the_unsaved_title(self):
+        # The title is good and the date is bad: Django puts the new title in
+        # the to-do in memory, but it is not saved. Only the box may show it.
+        response = self.client.post(
+            self.edit_url(), {"title": "Buy oat milk", "due_date": "not-a-date"}
+        )
+        self.assertContains(response, "<title>Edit to-do</title>", html=True)
+        self.assertContains(response, "<h1>Edit to-do</h1>", html=True)
+        self.assertContains(response, "Buy oat milk", count=1)
+
     def test_edit_does_not_change_done_or_created_at(self):
         cases = [
             ("a completed to-do, posted without done", True, {}),
@@ -181,7 +194,75 @@ class EditTests(TestCase):
                 [f"/{self.todo.pk}/edit/?show=completed"],
             )
 
-    # Protecting: this passes before the change, and must still pass after.
+    def test_hostile_params_never_reach_an_address(self):
+        hostile = "?show=//evil.example&next=https://evil.example"
+        url = self.edit_url(hostile)
+        with self.subTest("the edit page"):
+            response = self.client.get(url)
+            self.assertEqual(
+                page_parts(response).post_actions, [f"/{self.todo.pk}/edit/"]
+            )
+            self.assertContains(response, '<a href="/">Cancel</a>', html=True)
+        with self.subTest("a good post"):
+            response = self.client.post(url, {"title": "Buy oat milk"})
+            self.assertEqual(response.status_code, 302)
+            self.assertEqual(response["Location"], "/")
+
+    def test_todo_deleted_while_saving_is_not_brought_back(self):
+        # Someone deletes the to-do after the form was checked and before it is
+        # saved. The save must not make the to-do again.
+        real_is_valid = TodoEditForm.is_valid
+
+        def is_valid_then_deleted(form):
+            valid = real_is_valid(form)
+            Todo.objects.filter(pk=form.instance.pk).delete()
+            return valid
+
+        with patch.object(TodoEditForm, "is_valid", is_valid_then_deleted):
+            response = self.client.post(self.edit_url(), {"title": "Buy oat milk"})
+        self.assertEqual(response.status_code, 404)
+        self.assertFalse(Todo.objects.exists())
+
+    # Protecting: these pass before the change, and must still pass after.
+
+    def test_every_page_has_the_shared_head(self):
+        for name, url in [("list", reverse("todo_list")), ("edit", self.edit_url())]:
+            with self.subTest(page=name):
+                response = self.client.get(url)
+                self.assertContains(response, '<meta charset="utf-8">', html=True)
+                self.assertContains(
+                    response,
+                    '<meta name="viewport" '
+                    'content="width=device-width, initial-scale=1">',
+                    html=True,
+                )
+                self.assertContains(
+                    response, '<link rel="icon" href="data:,">', html=True
+                )
+                self.assertEqual(page_parts(response).html_lang, "en")
+
+    def test_edit_needs_the_csrf_token(self):
+        client = Client(enforce_csrf_checks=True)
+        response = client.post(self.edit_url(), {"title": "Hacked"})
+        self.assertEqual(response.status_code, 403)
+        self.assert_not_changed()
+
+    def test_the_edit_form_works_with_csrf_checks_on(self):
+        # Like a real browser: read the token from the page, then send it back.
+        # This fails if the edit form has no {% csrf_token %}.
+        client = Client(enforce_csrf_checks=True)
+        page = client.get(self.edit_url()).content.decode()
+        form = re.search(r'<form class="edit".*?</form>', page, re.S)
+        self.assertIsNotNone(form, "the page has no edit form")
+        token = re.search(r'name="csrfmiddlewaretoken" value="([^"]+)"', form[0])
+        self.assertIsNotNone(token, "the edit form has no CSRF token")
+        response = client.post(
+            self.edit_url(),
+            {"csrfmiddlewaretoken": token[1], "title": "Buy oat milk"},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.todo.refresh_from_db()
+        self.assertEqual(self.todo.title, "Buy oat milk")
 
     def test_list_page_keeps_its_title_and_add_form(self):
         response = self.client.get(reverse("todo_list"))

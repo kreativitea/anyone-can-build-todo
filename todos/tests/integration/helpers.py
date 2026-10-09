@@ -268,6 +268,7 @@ class PageParts(HTMLParser):
     None means there is no notes row.
     `pane_tags` is the name of every element inside the pane <aside>, in
     order, like ["h2", "dl", "dt", ...]. [] means "no pane".
+    `html_lang` is the `lang` of the <html> element (None if it has none).
     """
 
     def __init__(self, html, page_path=""):
@@ -277,6 +278,7 @@ class PageParts(HTMLParser):
             for form in PageForms(html, page_path).forms
             if form.method == "post"
         ]
+        self.html_lang = None
         self.titles = []
         self.current_links = []
         self.selected_titles = []
@@ -294,6 +296,8 @@ class PageParts(HTMLParser):
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
         self._pane_start(tag, attrs)
+        if tag == "html":
+            self.html_lang = attrs.get("lang")
         # Text inside a tag within the title (like the due date) is not the title.
         self._collect = []
         if self._title_depth is not None:
