@@ -15,6 +15,7 @@ from todos.tests.integration.helpers import (
     pane_element,
     show_date,
     title_element,
+    toggle_form,
 )
 
 
@@ -398,8 +399,7 @@ class EditLinkPlaceTests(TestCase):
             f'<li id="todo-{pk}" class="">'
             f"{title_element(self.todo)}"
             f'<a class="edit" href="/{pk}/edit/" aria-label="Edit Buy milk">Edit</a>'
-            f'<form method="post" action="/{pk}/toggle/">'
-            '<button type="submit">Done</button></form>'
+            f"{toggle_form(self.todo)}"
             f'<form method="post" action="/{pk}/delete/">'
             '<button type="submit">Delete</button></form>'
             "</li>"

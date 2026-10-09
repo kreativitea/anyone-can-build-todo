@@ -229,7 +229,7 @@ class SortTests(TestCase):
         todo = make("Buy milk")
         other = make("Call home")
         cases = [
-            ("toggle", reverse("todo_toggle", args=[todo.pk]), {}),
+            ("toggle", reverse("todo_toggle", args=[todo.pk]), {"done": "1"}),
             ("delete", reverse("todo_delete", args=[other.pk]), {}),
             ("add", reverse("todo_add"), {"title": "New"}),
             (
@@ -333,6 +333,6 @@ class SortTests(TestCase):
             "?sort=title%0D%0ALocation:%20https://evil.example",
         ]:
             with self.subTest(query=query):
-                response = self.client.post(toggle + query)
+                response = self.client.post(toggle + query, {"done": "1"})
                 self.assertEqual(response.status_code, 302)
                 self.assertEqual(response["Location"], "/")

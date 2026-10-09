@@ -14,27 +14,29 @@ from todos.models import Todo
 from todos.tests.integration.helpers import (
     link_href,
     page_forms,
+    page_parts,
     page_without_csrf,
     title_element,
+    toggle_form,
 )
 
 EMPTY = "<li>Nothing to do yet. Add something above.</li>"
 HIGH_LABEL = '<span class="priority high">High priority</span>'
 
 
-def todo_row(todo, done=False):
+def todo_row(todo, done=False, repeat=""):
     """One to-do on the list, exactly as the page must show it.
 
     The title, its priority label and its due date come from `title_element`,
-    which builds them from the to-do itself. Then the Edit link, Done and Delete.
+    which builds them from the to-do itself. `repeat` is the words an open
+    repeating to-do shows, like "Every week". Then the Edit link, Done and Delete.
     """
     return (
         f'<li id="todo-{todo.pk}" class="{"done" if done else ""}">'
-        f"{title_element(todo)}"
+        f"{title_element(todo, repeat=repeat)}"
         f'<a class="edit" href="{reverse("todo_edit", args=[todo.pk])}" '
         f'aria-label="Edit {escape(todo.title)}">Edit</a>'
-        f'<form method="post" action="{reverse("todo_toggle", args=[todo.pk])}">'
-        f'<button type="submit">{"Undo" if done else "Done"}</button></form>'
+        f"{toggle_form(todo, done)}"
         f'<form method="post" action="{reverse("todo_delete", args=[todo.pk])}">'
         '<button type="submit">Delete</button></form>'
         "</li>"
@@ -113,3 +115,36 @@ class JourneyTests(TestCase):
 
         page = self.press(page, "Done")
         self.assert_list(page, todo_row(rent, done=True))
+
+    def test_a_weekly_todo_comes_back(self):
+        page = self.client.get(reverse("todo_list"))
+
+        # Add a weekly to-do: choose "Every week" in the Repeats box.
+        page = self.press(
+            page,
+            "Add",
+            title="Take out the rubbish",
+            due_date="2026-10-12",
+            repeat="weekly",
+        )
+        rubbish = Todo.objects.get()
+        row = todo_row(rubbish, repeat="Every week")
+        self.assertIn('<small class="due">due 12 Oct 2026</small>', row)
+        self.assert_list(page, row)
+
+        # Done: it is completed, and a new one comes, due a week later.
+        page = self.press(page, "Done")
+        rubbish.refresh_from_db()
+        [next_one] = Todo.objects.filter(done=False)
+        self.assertEqual(rubbish.next_todo, next_one)
+        self.assertEqual(next_one.title, "Take out the rubbish")
+        next_row = todo_row(next_one, repeat="Every week")
+        self.assertIn('<small class="due">due 19 Oct 2026</small>', next_row)
+        self.assert_list(page, todo_row(rubbish, done=True))
+        self.assert_list(page, next_row)
+
+        # Undo on the completed one: the new one goes, the old one is open again.
+        page = self.press(page, "Undo")
+        self.assertEqual(list(Todo.objects.all()), [rubbish])
+        self.assert_list(page, row)
+        self.assertEqual(page_parts(page).titles, ["Take out the rubbish"])

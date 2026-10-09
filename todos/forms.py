@@ -34,6 +34,16 @@ class TodoForm(forms.ModelForm):
         empty_value=Todo.Priority.MEDIUM,
         initial=Todo.Priority.MEDIUM,
     )
+    # Like priority: a missing or empty repeat is "none". The check "a
+    # repeating to-do needs a due date" is in Todo.clean(), so the add form,
+    # the edit page and the admin all get it.
+    repeat = forms.TypedChoiceField(
+        label="Repeats",
+        choices=Todo.Repeat.choices,
+        required=False,
+        empty_value=Todo.Repeat.NONE,
+        initial=Todo.Repeat.NONE,
+    )
 
     class Meta:
         model = Todo
@@ -42,6 +52,7 @@ class TodoForm(forms.ModelForm):
             "due_date",
             "priority",
             "notes",
+            "repeat",
         ]
         field_classes = {"notes": NotesField}
         widgets = {
@@ -54,6 +65,20 @@ class TodoForm(forms.ModelForm):
             ),
             "notes": forms.Textarea(attrs={"rows": 3, "aria-label": "Notes"}),
         }
+
+    def save(self, commit=True):
+        """Save, and remember the due date's day for a monthly repeat.
+
+        Only when the to-do is new, or its due date or repeat changed: fixing
+        a typo in a copy due 28 Feb must not move "the 31st" to the 28th.
+        """
+        # self.errors runs the checks first: they put the new values in
+        # self.instance. With errors, super().save() refuses, as always.
+        changed = {"due_date", "repeat"} & set(self.changed_data)
+        if not self.errors and (self.instance._state.adding or changed):
+            due = self.instance.due_date
+            self.instance.repeat_day = due.day if due else None
+        return super().save(commit)
 
     def notes_box_open(self):
         """Open the folded notes box when there are notes to see, or an error about them."""

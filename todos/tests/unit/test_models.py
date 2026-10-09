@@ -1,4 +1,5 @@
-from datetime import timedelta
+from datetime import date, timedelta
+from unittest import mock
 
 from django.core.exceptions import ValidationError
 from django.test import TestCase
@@ -72,3 +73,97 @@ class TodoModelTests(TestCase):
             with self.assertRaises(ValidationError) as caught:
                 Todo(title="Buy milk", notes="a" * 501).full_clean()
             self.assertIn("notes", caught.exception.message_dict)
+
+
+class RepeatModelTests(TestCase):
+    """Repeating to-dos (feature 19): the fields, the check, and the next copy."""
+
+    # One sample value for each field a person can change. A new field from a
+    # later feature must be added here: see the test below.
+    SAMPLES = {
+        "title": "Bins",
+        "notes": "blue bag",
+        "priority": Todo.Priority.HIGH,
+        "repeat": "weekly",
+    }
+
+    def test_new_todo_does_not_repeat(self):
+        todo = Todo()
+        self.assertEqual(todo.repeat, "none")
+        self.assertFalse(todo.repeats)
+
+    def test_repeat_without_due_date_is_invalid(self):
+        with self.assertRaises(ValidationError) as caught:
+            Todo(title="x", repeat="weekly").full_clean()
+        self.assertEqual(
+            caught.exception.message_dict,
+            {"repeat": ["A repeating to-do needs a due date."]},
+        )
+
+    def test_next_copy_copies_every_field_a_person_can_change(self):
+        names = [
+            field.name
+            for field in Todo._meta.get_fields()
+            if getattr(field, "editable", False)
+            and not field.auto_created
+            and field.name not in {"done", "due_date", "created_at"}
+        ]
+        for name in names:
+            with self.subTest(field=name):
+                if name not in self.SAMPLES:
+                    self.fail(
+                        f"New field `{name}`: add a sample value here, and decide "
+                        "whether next_values() copies it."
+                    )
+                todo = Todo(title="x", repeat="daily", due_date=date(2026, 10, 12))
+                setattr(todo, name, self.SAMPLES[name])
+                self.assertEqual(getattr(todo.next_copy(), name), self.SAMPLES[name])
+
+    def test_next_copy_is_open_with_the_next_date(self):
+        todo = Todo.objects.create(
+            title="Bins", repeat="weekly", due_date=date(2026, 10, 12), done=True
+        )
+        copy = todo.next_copy()
+        self.assertFalse(copy.done)
+        self.assertEqual(copy.due_date, date(2026, 10, 19))
+        self.assertIsNone(copy.pk)
+
+    def test_next_copy_without_due_date_starts_from_today(self):
+        todo = Todo(title="Water plants", repeat="daily")
+        with mock.patch(
+            "django.utils.timezone.localdate", return_value=date(2026, 10, 12)
+        ):
+            copy = todo.next_copy()
+        self.assertEqual(copy.due_date, date(2026, 10, 13))
+
+    # Review fixes: the remembered day, and "edited".
+
+    def test_new_todo_has_no_repeat_day_and_is_not_edited(self):
+        todo = Todo.objects.create(title="Buy milk")
+        self.assertIsNone(todo.repeat_day)
+        self.assertFalse(todo.edited)
+
+    def test_next_copy_keeps_the_remembered_day(self):
+        # Due 28 Feb, but the person chose the 31st: the next one is 31 Mar.
+        todo = Todo(
+            title="Pay rent",
+            repeat="monthly",
+            due_date=date(2027, 2, 28),
+            repeat_day=31,
+        )
+        copy = todo.next_copy()
+        self.assertEqual(copy.repeat_day, 31)
+        self.assertEqual(copy.due_date, date(2027, 3, 31))
+        self.assertFalse(copy.edited)
+
+    def test_next_copy_without_a_remembered_day_uses_the_due_dates_day(self):
+        todo = Todo(title="Pay rent", repeat="monthly", due_date=date(2027, 2, 28))
+        self.assertEqual(todo.next_copy().due_date, date(2027, 3, 28))
+
+    def test_a_copy_remembers_the_day_it_was_counted_from(self):
+        # An old row (no remembered day) due 31 Jan: its copy is due 28 Feb
+        # but remembers the 31st, so the one after it is 31 Mar, not 28 Mar.
+        todo = Todo(title="Pay rent", repeat="monthly", due_date=date(2027, 1, 31))
+        copy = todo.next_copy()
+        self.assertEqual((copy.due_date, copy.repeat_day), (date(2027, 2, 28), 31))
+        self.assertEqual(copy.next_copy().due_date, date(2027, 3, 31))

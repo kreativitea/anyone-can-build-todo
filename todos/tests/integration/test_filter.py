@@ -107,14 +107,17 @@ class FilterTests(TestCase):
     def test_toggle_keeps_the_filter(self):
         self.make_one_of_each()
         response = self.client.post(
-            reverse("todo_toggle", args=[self.completed.pk]) + "?show=completed"
+            reverse("todo_toggle", args=[self.completed.pk]) + "?show=completed",
+            {"done": "0"},
         )
         self.assertEqual(response["Location"], "/?show=completed")
 
     def test_toggle_on_active_leaves_the_list(self):
         todo = Todo.objects.create(title="Buy milk")
         response = self.client.post(
-            reverse("todo_toggle", args=[todo.pk]) + "?show=active", follow=True
+            reverse("todo_toggle", args=[todo.pk]) + "?show=active",
+            {"done": "1"},
+            follow=True,
         )
         self.assertEqual(response.redirect_chain, [("/?show=active", 302)])
         self.assertEqual(page_parts(response).titles, [])
@@ -146,7 +149,8 @@ class FilterTests(TestCase):
         self.make_one_of_each()
         response = self.client.post(
             reverse("todo_toggle", args=[self.active.pk])
-            + "?show=active&next=https://evil.example"
+            + "?show=active&next=https://evil.example",
+            {"done": "1"},
         )
         self.assertEqual(response["Location"], "/?show=active")
 
@@ -215,7 +219,7 @@ class FilterTests(TestCase):
         toggle = reverse("todo_toggle", args=[self.active.pk])
         for url in [toggle, toggle + "?show=all"]:
             with self.subTest(url=url):
-                response = self.client.post(url)
+                response = self.client.post(url, {"done": "1"})
                 self.assertEqual(response["Location"], "/")
 
     def test_redirect_only_goes_to_the_list_page(self):
@@ -231,6 +235,6 @@ class FilterTests(TestCase):
         ]
         for query, data in cases:
             with self.subTest(query=query):
-                response = self.client.post(toggle + query, data)
+                response = self.client.post(toggle + query, {**data, "done": "1"})
                 self.assertEqual(response.status_code, 302)
                 self.assertEqual(response["Location"], "/")

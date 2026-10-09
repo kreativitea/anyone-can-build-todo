@@ -374,13 +374,15 @@ def show_date(day):
     return f"{day.day} {day:%b %Y}"
 
 
-def title_element(todo, query="", selected=False, match_hint=False):
+def title_element(todo, query="", selected=False, match_hint=False, repeat=""):
     """The whole <span class="title"> of one row: the link, the search's
-    "matches in notes" hint, the priority label (High or Low; Medium has none)
-    and the due date.
+    "matches in notes" hint, the priority label (High or Low; Medium has none),
+    the due date and the repeat.
 
     `query` is the list query without the selection, like "?show=active".
     `match_hint` is True when the search matched only the notes.
+    `repeat` is the words an OPEN repeating to-do shows, like "Every week";
+    "" means no repeat span (a to-do that does not repeat, or a completed one).
     """
     joiner = "&" if query else "?"
     href = f"/{escape(query)}{joiner}selected={todo.pk}#details"
@@ -395,9 +397,21 @@ def title_element(todo, query="", selected=False, match_hint=False):
         if todo.due_date
         else ""
     )
+    repeat_span = f'<span class="repeat">{repeat}</span>' if repeat else ""
     return (
         f'<span class="title"><a href="{href}"{current}>{escape(todo.title)}</a>'
-        f"{hint}{label}{due}</span>"
+        f"{hint}{label}{due}{repeat_span}</span>"
+    )
+
+
+def toggle_form(todo, done=False, query=""):
+    """A row's Done (or, for a completed to-do, Undo) form, exactly, without
+    the CSRF token. It sends the state the person wants: done=1 or done=0.
+    """
+    return (
+        f'<form method="post" action="/{todo.pk}/toggle/{escape(query)}">'
+        f'<input type="hidden" name="done" value="{0 if done else 1}">'
+        f'<button type="submit">{"Undo" if done else "Done"}</button></form>'
     )
 
 
@@ -411,6 +425,7 @@ def pane_element(
     close_url,
     notes=None,
     edit_url=None,
+    repeats=None,
 ):
     """The whole details <aside>, exactly as the page must show it.
 
@@ -420,6 +435,8 @@ def pane_element(
     lines are joined with <br>, after the Created row.
     `edit_url` is the pane's Edit link: the edit page with the same list query,
     selection included. None builds it from `close_url`, like the page does.
+    `repeats` (None: no Repeats row) is the words of the repeat, like
+    "Every week". Its row comes right after Due.
     """
     if edit_url is None:
         query = close_url.removeprefix("/")
@@ -428,6 +445,7 @@ def pane_element(
     rows = [
         ("Status", status),
         ("Due", due),
+        *([("Repeats", repeats)] if repeats is not None else []),
         ("Priority", priority),
         ("Created", created),
     ]

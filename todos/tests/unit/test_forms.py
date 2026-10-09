@@ -1,6 +1,8 @@
+from datetime import date
+
 from django.test import TestCase
 
-from todos.forms import TodoForm
+from todos.forms import TodoEditForm, TodoForm
 from todos.models import Todo
 from todos.tests.integration.helpers import PRIORITY_SELECT
 
@@ -122,3 +124,58 @@ class TodoFormNotesTests(TestCase):
                 form = self.form(**data)
                 form.is_valid()
                 self.assertEqual(form.notes_box_open(), expected)
+
+
+class TodoFormRepeatTests(TestCase):
+    def test_missing_repeat_on_edit_becomes_none(self):
+        # "Changes in behaviour", point 6: like priority, a post without
+        # `repeat` saves the empty value ("none"), it does not keep the old one.
+        todo = Todo.objects.create(
+            title="Bins", due_date=date(2026, 10, 12), repeat="weekly"
+        )
+        form = TodoEditForm({"title": "Bins", "due_date": "2026-10-12"}, instance=todo)
+        self.assertTrue(form.is_valid(), form.errors)
+        form.save()
+        todo.refresh_from_db()
+        self.assertEqual(todo.repeat, "none")
+
+    # The remembered day (owner decision): a form that sets or changes the
+    # due date or the repeat remembers the due date's day.
+
+    def test_add_remembers_the_day(self):
+        cases = [
+            ({"title": "Rent", "due_date": "2027-01-31", "repeat": "monthly"}, 31),
+            ({"title": "Milk", "due_date": "2027-01-05"}, 5),
+            ({"title": "Milk"}, None),
+        ]
+        for data, day in cases:
+            with self.subTest(data=data):
+                todo = TodoForm(data).save()
+                self.assertEqual(todo.repeat_day, day)
+
+    def test_edit_that_changes_the_date_remembers_the_new_day(self):
+        todo = Todo.objects.create(
+            title="Rent", due_date=date(2027, 2, 28), repeat="monthly", repeat_day=31
+        )
+        data = {"title": "Rent", "due_date": "2027-02-27", "repeat": "monthly"}
+        TodoEditForm(data, instance=todo).save()
+        todo.refresh_from_db()
+        self.assertEqual(todo.repeat_day, 27)
+
+    def test_edit_that_changes_the_repeat_remembers_the_day(self):
+        todo = Todo.objects.create(title="Rent", due_date=date(2027, 1, 30))
+        data = {"title": "Rent", "due_date": "2027-01-30", "repeat": "monthly"}
+        TodoEditForm(data, instance=todo).save()
+        todo.refresh_from_db()
+        self.assertEqual(todo.repeat_day, 30)
+
+    def test_edit_of_only_the_title_keeps_the_day(self):
+        # A copy due 28 Feb that remembers the 31st: fixing a typo must not
+        # move the day to the 28th.
+        todo = Todo.objects.create(
+            title="Rnet", due_date=date(2027, 2, 28), repeat="monthly", repeat_day=31
+        )
+        data = {"title": "Rent", "due_date": "2027-02-28", "repeat": "monthly"}
+        TodoEditForm(data, instance=todo).save()
+        todo.refresh_from_db()
+        self.assertEqual(todo.repeat_day, 31)
