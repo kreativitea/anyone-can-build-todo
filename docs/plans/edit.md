@@ -1,7 +1,7 @@
 # Plan: edit a to-do
 
-Status: **approved, in progress.** Built and tested on `main` with wave 1. The part "After 6 and 7
-are on `main`" (and its four tests) is left until this branch is rebased on 6 and 7.
+Status: **done.** Built, reviewed, and rebased on `main` with 6 (priority), 21 (details pane) and
+7 (notes). See "What happened".
 
 This is feature 4, in wave 2 of [the rollout plan](feature-rollout.md). The merge order in wave 2
 is: 6 priority → 7 notes → **4 edit** → 10 search.
@@ -164,7 +164,8 @@ the Active view.
 
 ### The CUJ test grows one step
 
-A **CUJ** (critical user journey) test is a whole journey in a real browser. AGENTS.md says: add a
+A **CUJ** (critical user journey) test is a whole journey a person takes (since the rebase: through
+Django's test client, with CSRF checks on; see "Top: the CUJ test"). AGENTS.md says: add a
 new CUJ test only for a **new** journey. Fixing a typo in a to-do you just planned is part of the
 same journey, "plan and finish a to-do". So we add **one step** to the one CUJ test, like feature 5
 did. We do not add a new test.
@@ -456,6 +457,13 @@ The steps after it (Done, Undo, Delete) use the new `item`.
 How it fails today: there is no link called "Edit Buy milk", so Playwright waits 5 seconds and
 fails with a timeout.
 
+**Changed at the rebase:** Playwright was removed from the project (the owner decided: no
+real-browser tests). The journey now uses Django's test client with CSRF checks on. The edit step
+is: find the row's link named exactly "Edit Buy milk" (`link_href`, a new shared helper), `GET` the
+edit page, press **Save** with the title `Buy oat milk` (`press()` reads the form from the page with
+`page_forms`, so every field and the CSRF token are sent as a browser would), follow the redirect
+to `/`, and check the whole row exactly. The row in the journey now has the Edit link.
+
 ### Bottom: unit tests (`todos/tests/unit/test_edit_form.py`, new file)
 
 A new file, so it does not clash with 6 and 7's form tests. The file imports `from todos import
@@ -618,8 +626,7 @@ why.
    `aria-describedby="id_title_error"` when the title has the error. The bad-date case checks the
    date's error list (`id="id_due_date_error"`) and a title box with no error attributes.
 6. **`page_context` and `back_to_list` did not change.** The edit view only uses them as they are.
-7. **The part for 6 and 7 is not done yet.** The changes in "After 6 and 7 are on `main`" and the
-   four tests in "After the rebase on 6 and 7" wait until this branch is rebased on that `main`.
+7. **The part for 6 and 7** was done after the rebase: see "After the rebase on 6, 21 and 7" below.
 
 Results before the code (`make test`, `make test-cuj`): the three unit tests failed (two with
 `AttributeError: module 'todos.forms' has no attribute 'TodoEditForm'`, one with `AssertionError`:
@@ -686,3 +693,62 @@ Results: before the fix, `test_edit.py` had 19 tests and only the new deleted-ro
 other new tests passed, and each one failed against its deliberate bug; every bug was taken out
 again. After the fix: `make check` passes (Integration 83, Unit 15, CUJ 1), `make test-cuj`
 passes, and `makemigrations --check` says "No changes detected".
+
+### After the rebase on 6, 21 and 7
+
+`main` then had priority (6), the details pane (21) and notes (7), and Playwright was gone: the
+journeys use Django's test client, and CSS is checked by eye with headless Chrome. The branch was
+rebased (`git rebase origin/main`), and the clashes were solved by keeping both sides:
+
+1. **`todo_list.html`** extends `base.html`. The CSS that 6, 21 and 7 added (the priority labels,
+   the add form's select and notes box, the title link underline on hover and on phones, the
+   selected row, the pane, the wide-screen grid and `body { max-width: 56rem }`) moved into the
+   list page's `{% block style %}`, with no rule changed. `base.html` keeps `32rem`; the list page's
+   wide-screen rule comes after it, so it still wins on the list page only. The general
+   `.errorlist` rule is in `base.html`; the list page keeps `form.add .errorlist { flex: 1 1 100%; }`.
+2. **The row**: the title span (title link from 21, priority label from 6, due date), then the
+   Edit link, then Done, then Delete.
+3. **`forms.py`**: `TodoForm` has priority and notes, plus `format="%Y-%m-%d"` on the date box.
+   `TodoEditForm` takes the hidden name (`aria-label="Notes"`) off the notes box too, so it is named
+   by its visible label "Notes:". The notes box on the edit page is open, not folded.
+4. **The CUJ edit step** was rewritten for the test client (see "Top: the CUJ test"). A new shared
+   helper, `link_href(response, name)` in `helpers.py`, finds the one link whose whole name is
+   exactly `name` (its `aria-label`, else its text), like a click; it has unit tests in
+   `test_helpers.py`. Exact names matter because the title "Buy milk" is now a link too.
+5. **`helpers.py`**: the code-review helper `html_lang` moved into the new `PageParts`.
+   `pane_element` has a new `edit_url` (by default built from `close_url`, like the page does).
+6. **The pane's Edit link** (asked by 21): `<a href="/5/edit/?show=active&selected=5">Edit</a>`
+   in `<p class="details-actions">`, before Close. It keeps `selected`, so after Save or Cancel the
+   pane is open again with the new values.
+7. **No migration**: `makemigrations --check` says "No changes detected".
+
+New tests, and each one seen failing (before the code, or against a deliberate bug that was then
+taken out; `git status` was clean after):
+
+| Test | Failed against |
+|---|---|
+| `test_edit_form_has_every_field_a_person_can_change` (now title, due date, priority, notes; passed with no change) | `notes` or `priority` taken out of `TodoEditForm` |
+| `test_edit_form_does_not_change_the_add_form` (now with priority `{}` and notes `{"cols": "40", "rows": 3, "aria-label": "Notes", "maxlength": "500"}`) | `self.base_fields["priority"]...["class"] = "edit"` (it also broke the add form's priority tests) |
+| `test_edit_page_shows_saved_priority_and_notes` | notes or priority out of the edit form; the GET form made without `instance` |
+| `test_edit_saves_notes_and_priority` | notes or priority out of the edit form |
+| `test_editing_only_the_title_keeps_the_rest` (posts what the edit page's form sends) | the GET form made without `instance`: date, priority and notes were lost |
+| `test_fields_left_out_of_a_post` | `default=""` taken off `notes` for one run: notes `''` instead of kept |
+| `test_edit_changes_the_notes`, `test_edit_can_empty_the_notes` (from the notes plan) | notes out of the edit form |
+| `test_edit_title_keeps_the_notes` (from the notes plan; reads the notes from the edit page) | the GET form made without `instance`; notes out of the form |
+| `test_edit_link_is_right_before_done` (the whole row, exactly) | the Edit link moved after Delete (the journeys failed too) |
+| `test_pane_has_an_edit_link` (the whole pane, exactly) | before the code: no Edit link in the pane; the link without `list_query`; the link after Close |
+| `test_save_from_the_pane_keeps_it_open` | a save that drops `selected` from the redirect |
+
+Every details-pane and notes test that compares the whole pane also failed until the pane had its
+Edit link, because `pane_element` now draws it.
+
+Results: `make test` (Integration 125, Unit 57), `make test-cuj` (CUJ 3) and `make check` all
+pass.
+
+Looked at by eye with headless Chrome (`--screenshot`), with the CSS from `main` and from this
+branch: at 1280 pixels wide with the pane open, the two pages are the same except the new Edit
+links (on each row before Done, and in the pane before Close): the same grid, the same selected row,
+the same priority labels and the same pane. The edit page at 1280 is 32rem wide and shows Title,
+Due date (optional), Priority (High chosen) and Notes (open, with both lines), each label above
+its box, then Save and Cancel. (Headless Chrome cannot make a window narrower than about 500
+pixels, so its 375 screenshot is cut off on the right, for `main` the same way.)
